@@ -1,0 +1,3268 @@
+openapi: 3.1.0
+info:
+  title: Factory Ops API
+  description: |
+    工廠值班工作管理系統 REST API(v1.3)。
+    - API-first,Web 與未來 Native App 共用同一組 API。
+    - 認證採 JWT Bearer Token(access + refresh)。JWT claims 帶 `userId`、`accountName`、`rootOrgId`、`orgPath[]`、`roles[]`、`groupIds[]`、`orgManagerScopes[]`(衍生自 Organization.managerId 反查)。
+    - **多租戶隔離**:所有資源(除 `Organization` 自身)歸屬於某個 `rootOrgId`,server 強制 scope。跨 root org 操作僅 `ADMIN` 系統角色可進行。
+    - **時間欄位**:wire format 使用 ISO 8601 + offset(例 `2026-05-04T08:30:00+08:00`,Q-17 拍板);儲存層為 UTC `Instant`。
+    - 列表端點預設使用 cursor-based pagination,支援欄位投影與增量同步。
+    - **Organization 為 polymorphic 樹**(FAB → DIVISION → DEPARTMENT → SECTION),只有 leaf type 可以承載 Group / Project / Task(見 ADR-0004)。每節點有 **單一 `managerId`**(對應 ORG_MANAGER)+ **多位 `leaderIds[]`**(業務負責人列表)— 見 ADR-0010。
+    - **Group 為平面結構**(屬唯一 leaf Organization),polymorphic by `type`(DEFAULT / LINE / TEAM / SHIFT…);Group 加 `settings.qa` 用於設定 QA 雙簽機制(見 ADR-0011)。
+    - **Template 機制**:支援 GLOBAL(ADMIN 維護)與 ORG(各 Org 維護)兩種 scope;可 fork from GLOBAL,可直接實例化(見 ADR-0006)。
+    - **跨層派工(v1.3 改寫)**:任一 Organization 節點的 manager 可直接派 ActionRequest 到其子孫中的 leaf Org(`targetOrgId` 必為 leaf);**v1.3 移除多層 relay 流程**(見 ADR-0008 v1.3)。
+    - **Task QA 雙簽**:Task 建立時從所屬 Project.groupIds 對應 Group settings.qa snapshot policy;之後 Group settings 變更不影響該 Task;Review action 走 `POST /tasks/{taskId}/review`(見 ADR-0011)。
+    - **HR 整合**:User 為 HR User 的本地投影,以 `accountName` 對 HR Mock REST 查詢(見 ADR-0007 v1.3 Amendment)。
+    - **事件分發**:NATS + Webhook 雙通道(見 ADR-0009)。
+  version: 1.3.0
+  contact:
+    name: Factory Ops Team
+servers:
+  - url: https://api.factory-ops.example.com/v1
+    description: Production
+  - url: http://localhost:8080/v1
+    description: Local development
+
+tags:
+  - name: Auth
+    description: 認證與令牌管理
+  - name: Organizations
+    description: 組織(多型樹:FAB / DIVISION / DEPARTMENT / SECTION,只有 leaf 可承載工作)
+  - name: Users
+    description: 使用者(HR 投影;ORG_ADMIN / ADMIN 操作)
+  - name: Me
+    description: 當前登入者自身資源
+  - name: Groups
+    description: 群組(平面結構,屬唯一 leaf Organization;polymorphic by type)
+  - name: GroupMemberships
+    description: Group 成員管理
+  - name: Projects
+    description: 專案(必須屬於 leaf Organization)
+  - name: Tasks
+    description: 任務(多型)
+  - name: ActionRequests
+    description: 動作需求(支援跨層派工)
+  - name: Comments
+    description: 任務留言
+  - name: Attachments
+    description: 附件上傳
+  - name: Memberships
+    description: Project 成員管理
+  - name: ProjectTemplates
+    description: Project 範本管理(GLOBAL / ORG)
+  - name: TaskTemplates
+    description: Task 範本管理(GLOBAL / ORG)
+  - name: SystemTemplates
+    description: 全域 Template 庫(ADMIN 維護)
+  - name: Webhooks
+    description: 事件訂閱(NATS 之外的對外通知)
+  - name: Health
+    description: 健康檢查
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ===================== Health =====================
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: UP }
+
+  # ===================== Auth =====================
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: 以 accountName + 密碼登入
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: 登入成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: 以 refresh token 換發新的 access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200':
+          description: 新 token pair
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: 登出(撤銷 refresh token)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '204': { description: No Content }
+
+  /auth/password:
+    put:
+      tags: [Auth]
+      summary: 變更自己的密碼
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string, format: password }
+                newPassword: { type: string, format: password, minLength: 12 }
+      responses:
+        '204': { description: No Content }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ===================== Me =====================
+  /me:
+    get:
+      tags: [Me]
+      summary: 取得當前登入者資料
+      responses:
+        '200':
+          description: 自身資料
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /me/notification-preferences:
+    get:
+      tags: [Me]
+      summary: 取得通知偏好(預留)
+      responses:
+        '200':
+          description: 通知偏好
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPreference'
+    put:
+      tags: [Me]
+      summary: 更新通知偏好(預留)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotificationPreference'
+      responses:
+        '200':
+          description: 已更新
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPreference'
+
+  # ===================== Organizations =====================
+  /orgs:
+    get:
+      tags: [Organizations]
+      summary: 列出 Organization 節點(僅當前 user 所屬 root 樹的節點;ADMIN 跨樹)
+      description: |
+        支援多種過濾:
+        - `type=FAB|DIVISION|DEPARTMENT|SECTION|...`
+        - `parentId=<id>`(取直接子節點;傳 `null` 取 root)
+        - `leafOnly=true`(只回 type ∈ leafTypes 的節點)
+        - `underOrgId=<id>`(回該節點及其子孫;server 沿樹計算)
+      parameters:
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - in: query
+          name: type
+          schema: { type: string }
+          description: 過濾 Organization 型態
+        - in: query
+          name: parentId
+          schema: { type: string, nullable: true }
+          description: 過濾 parentId;傳 `null` 取 root
+        - in: query
+          name: leafOnly
+          schema: { type: boolean, default: false }
+          description: 只回 leaf type(可承載工作的節點)
+        - in: query
+          name: underOrgId
+          schema: { type: string }
+          description: 沿樹回傳該節點及其子孫
+        - in: query
+          name: q
+          schema: { type: string }
+      responses:
+        '200':
+          description: Organization 清單
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrganizationPage' }
+    post:
+      tags: [Organizations]
+      summary: 建立 Organization 節點
+      description: |
+        - 建立 root(無 parentId):僅 `ADMIN` 可。
+        - 建立子節點(有 parentId):`ORG_ADMIN`(同 root)或 `ADMIN`。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOrganizationRequest' }
+      responses:
+        '201':
+          description: 已建立
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Organization' }
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /orgs/{orgId}:
+    parameters:
+      - $ref: '#/components/parameters/OrgIdParam'
+    get:
+      tags: [Organizations]
+      summary: 讀取單一 Organization 節點
+      responses:
+        '200':
+          description: Organization
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Organization' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Organizations]
+      summary: 更新 Organization 節點(name / parentId / leaderId / settings(僅 root))
+      description: 變更 parentId 會即時驗證 cycle 與深度上限,失敗回 409
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateOrganizationRequest' }
+      responses:
+        '200':
+          description: 已更新
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Organization' }
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      tags: [Organizations]
+      summary: 軟刪除 Organization 節點
+      description: |
+        - 非 leaf 節點:必須先處理(移除/軟刪)所有子孫,否則 409
+        - root:cascade soft-delete 整棵樹下所有資源
+      responses:
+        '204': { description: No Content }
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /orgs/{orgId}/transfer-manager:
+    parameters:
+      - $ref: '#/components/parameters/OrgIdParam'
+    post:
+      tags: [Organizations]
+      summary: 設置 / 變更 / 清空 Organization 節點 manager(ORG_ADMIN / ADMIN;v1.3 取代 transfer-leader)
+      description: |
+        - 每個 Organization 節點最多一位 `managerId`(對應 ORG_MANAGER 角色)。
+        - 傳 `newManagerId: null` 表示清空(該節點暫無 manager)。
+        - 變更會寫入 `Organization.history[]` 並 emit `factory-ops.org.manager-transferred`。
+        - 對應的 `User.orgManagerScopes[]` 衍生欄位由 reactor 同步維護。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [newManagerId]
+              properties:
+                newManagerId:
+                  type: string
+                  nullable: true
+                  description: 新 manager 的 userId;傳 null 表示清空
+                reason: { type: string }
+      responses:
+        '200':
+          description: 已變更
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Organization' }
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /orgs/{orgId}/leaders:
+    parameters:
+      - $ref: '#/components/parameters/OrgIdParam'
+    get:
+      tags: [Organizations]
+      summary: 列出該 Organization 節點的 leaders(0..N)
+      description: |
+        回傳 `leaderIds[]` 對應的 User snapshot;leader 為該節點的業務負責人,
+        於 ActionRequest dispatch 時為 ownerId 預設候選(見 ADR-0010)。
+      responses:
+        '200':
+          description: Leader 清單
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/User' }
+    post:
+      tags: [Organizations]
+      summary: 新增一位 leader(ORG_ADMIN / ADMIN)
+      description: |
+        - 將 `userId` 加入該節點的 `leaderIds[]`;若已存在則 409。
+        - user 必須與 Organization 同 `rootOrgId` 且 `active = true`,否則 422。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId]
+              properties:
+                userId: { type: string }
+                reason: { type: string }
+      responses:
+        '201':
+          description: 已加入
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Organization' }
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /orgs/{orgId}/leaders/{userId}:
+    parameters:
+      - $ref: '#/components/parameters/OrgIdParam'
+      - $ref: '#/components/parameters/UserIdParam'
+    delete:
+      tags: [Organizations]
+      summary: 移除一位 leader(ORG_ADMIN / ADMIN)
+      description: |
+        - 將指定 `userId` 自 `leaderIds[]` 移除。
+        - 若為最後一位 leader,允許移除(`leaderIds.length == 0`),但之後新派工到此 leaf 會 409 `target_org_no_leader`。
+      responses:
+        '204': { description: No Content }
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /orgs/{orgId}/dispatch-action-request:
+    parameters:
+      - $ref: '#/components/parameters/OrgIdParam'
+    post:
+      tags: [ActionRequests]
+      summary: 上級向下級 leaf 直接派 ActionRequest(Single-hop;v1.3 改寫)
+      description: |
+        - `orgId` 是 **targetOrgId**(被派的 leaf Organization)。
+        - **target 必為 leaf**(`type ∈ root.settings.leafTypes`),否則 422 `target_must_be_leaf`。
+        - actor 必須是 target 某個祖先節點(含 target 本身)的 manager(`Organization.managerId == actor.userId`),否則 403 `not_authorized_to_dispatch`。server 自動推導 `originatingOrgId` 為「actor 所有 manager scope 中,target 的最近祖先」。
+        - **預設 ownerId 規則**(見 ADR-0010):
+          - `targetOrg.leaderIds.length == 0` → 409 `target_org_no_leader`
+          - `length == 1` → 自動 `ownerId = leaderIds[0]`(忽略 body.ownerId 或要求等於該值)
+          - `length >= 2` → 必須 body.ownerId ∈ leaderIds;未提供則 422 `owner_must_be_specified`,不在集合中則 422 `owner_not_in_leaders`
+        - **v1.3 移除「relay 到下一級」流程**;不再有 `POST /action-requests/{id}/relay`。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DispatchActionRequestRequest' }
+      responses:
+        '201':
+          description: 已建立 ActionRequest
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionRequest' }
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  # ===================== Groups =====================
+  /orgs/{orgId}/groups:
+    parameters:
+      - $ref: '#/components/parameters/OrgIdParam'
+    get:
+      tags: [Groups]
+      summary: 列出 Group(平面;支援以 type / organizationId / underOrgId 過濾)
+      description: |
+        Path 中的 `orgId` 為 **rootOrgId**;Group 為平面結構,無 parentId。
+        - `organizationId=<leafOrgId>`:過濾屬於某個 leaf Org 的 Groups
+        - `underOrgId=<orgId>`:過濾「屬於該節點底下任一 leaf Org」的 Groups(server 沿 Org 樹計算)
+      parameters:
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/FieldsParam'
+        - in: query
+          name: type
+          schema: { type: string }
+          description: 過濾 Group 型態(DEFAULT / LINE / TEAM / SHIFT…)
+        - in: query
+          name: organizationId
+          schema: { type: string }
+          description: 過濾屬於某個 leaf Organization 的 Groups
+        - in: query
+          name: underOrgId
+          schema: { type: string }
+          description: 過濾屬於該 Org 節點底下任一 leaf 的 Groups(server 計算 ancestry)
+        - in: query
+          name: leaderId
+          schema: { type: string }
+        - in: query
+          name: q
+          schema: { type: string }
+          description: 名稱關鍵字
+      responses:
+        '200':
+          description: Group 清單
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupPage' }
+    post:
+      tags: [Groups]
+      summary: 建立 Group(必須屬於 leaf Organization)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateGroupRequest' }
+      responses:
+        '201':
+          description: 已建立
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Group' }
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /orgs/{orgId}/groups/{groupId}:
+    parameters:
+      - $ref: '#/components/parameters/OrgIdParam'
+      - $ref: '#/components/parameters/GroupIdParam'
+    get:
+      tags: [Groups]
+      summary: 讀取單一 Group
+      responses:
+        '200':
+          description: Group
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Group' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Groups]
+      summary: 更新 Group(name / type / attributes)
+      description: Group 為平面;不可變更 organizationId(如需轉移請新建新 Group + 移轉成員)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateGroupRequest' }
+      responses:
+        '200':
+          description: 已更新
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Group' }
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      tags: [Groups]
+      summary: 軟刪除 Group
+      description: 必須先確保無 active 成員與進行中的 Project / Task,否則 409
+      responses:
+        '204': { description: No Content }
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /orgs/{orgId}/groups/{groupId}/members:
+    parameters:
+      - $ref: '#/components/parameters/OrgIdParam'
+      - $ref: '#/components/parameters/GroupIdParam'
+    get:
+      tags: [GroupMemberships]
+      summary: 列出 Group 成員
+      parameters:
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - in: query
+          name: includeInactive
+          schema: { type: boolean, default: false }
+          description: 是否包含已離開(`leftAt` 非 null)的歷史成員
+      responses:
+        '200':
+          description: GroupMembership 清單
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/GroupMembership' }
+    post:
+      tags: [GroupMemberships]
+      summary: 加入成員
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId]
+              properties:
+                userId: { type: string }
+                role:
+                  type: string
+                  enum: [MEMBER, LEAD, OBSERVER]
+                  default: MEMBER
+      responses:
+        '201':
+          description: 已加入
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupMembership' }
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /orgs/{orgId}/groups/{groupId}/members/{userId}:
+    parameters:
+      - $ref: '#/components/parameters/OrgIdParam'
+      - $ref: '#/components/parameters/GroupIdParam'
+      - $ref: '#/components/parameters/UserIdParam'
+    delete:
+      tags: [GroupMemberships]
+      summary: 移除成員(等同設定 `leftAt`)
+      description: 若該 user 是 Group leader,必須先 transferLeader,否則 409
+      responses:
+        '204': { description: No Content }
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /orgs/{orgId}/groups/{groupId}/transfer-leader:
+    parameters:
+      - $ref: '#/components/parameters/OrgIdParam'
+      - $ref: '#/components/parameters/GroupIdParam'
+    post:
+      tags: [GroupMemberships]
+      summary: 移轉 Group leader
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [newLeaderId]
+              properties:
+                newLeaderId: { type: string }
+                reason: { type: string }
+      responses:
+        '200':
+          description: 已移轉
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Group' }
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /orgs/{orgId}/groups/{groupId}/history:
+    parameters:
+      - $ref: '#/components/parameters/OrgIdParam'
+      - $ref: '#/components/parameters/GroupIdParam'
+    get:
+      tags: [Groups]
+      summary: 列出 Group 變更歷程
+      responses:
+        '200':
+          description: 歷程
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/HistoryEntry' }
+
+  /orgs/{orgId}/groups/{groupId}/settings:
+    parameters:
+      - $ref: '#/components/parameters/OrgIdParam'
+      - $ref: '#/components/parameters/GroupIdParam'
+    get:
+      tags: [Groups]
+      summary: 讀取 Group settings(含 QA 雙簽設定)
+      description: |
+        Group settings 控制該 Group 的工作流客製,目前主要為 `qa` 子文件(QA 雙簽)。
+        詳見 ADR-0011。
+      responses:
+        '200':
+          description: Group settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupSettings' }
+    patch:
+      tags: [Groups]
+      summary: 更新 Group settings(GROUP_MANAGER / GROUP_ADMIN)
+      description: |
+        - 變更**只影響此後新建立的 Task**;進行中 Task 仍使用其建立時 snapshot 的 `qaReviewPolicy`(對應 INV-31)。
+        - `qa.dualSignRequired = true` 但 `requiredReviewerRoles[]` 為空 → 422
+        - `requiredReviewerRoles[]` 只能含第一線角色(OPERATOR / SHIFT_LEAD / ENGINEER / QA / GROUP_ADMIN / GROUP_MANAGER),否則 422
+        - 變更會寫入 `Group.history[]` 並 emit `factory-ops.group.settings-qa-updated`。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateGroupSettingsRequest' }
+      responses:
+        '200':
+          description: 已更新
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupSettings' }
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  # ===================== System (GLOBAL) Templates =====================
+  /system/project-templates:
+    get:
+      tags: [SystemTemplates]
+      summary: 列出 GLOBAL ProjectTemplate(所有角色可讀)
+      parameters:
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - in: query
+          name: tag
+          schema: { type: string }
+          description: 以 tag 篩選(可重複)
+        - in: query
+          name: active
+          schema: { type: boolean }
+        - in: query
+          name: q
+          schema: { type: string }
+      responses:
+        '200':
+          description: GLOBAL ProjectTemplate 清單
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectTemplatePage' }
+    post:
+      tags: [SystemTemplates]
+      summary: 建立 GLOBAL ProjectTemplate(ADMIN 限定)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProjectTemplateRequest' }
+      responses:
+        '201':
+          description: 已建立
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectTemplate' }
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /system/project-templates/{templateId}:
+    parameters:
+      - $ref: '#/components/parameters/TemplateIdParam'
+    get:
+      tags: [SystemTemplates]
+      summary: 讀取 GLOBAL ProjectTemplate
+      parameters:
+        - in: query
+          name: version
+          schema: { type: integer }
+      responses:
+        '200':
+          description: ProjectTemplate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectTemplate' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [SystemTemplates]
+      summary: 更新 GLOBAL ProjectTemplate(ADMIN;產生新 version)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProjectTemplateRequest' }
+      responses:
+        '200':
+          description: 新 version 已建立
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectTemplate' }
+    delete:
+      tags: [SystemTemplates]
+      summary: Deactivate GLOBAL ProjectTemplate(ADMIN)
+      responses:
+        '204': { description: No Content }
+
+  /system/task-templates:
+    get:
+      tags: [SystemTemplates]
+      summary: 列出 GLOBAL TaskTemplate
+      parameters:
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - in: query
+          name: tag
+          schema: { type: string }
+        - in: query
+          name: type
+          schema: { type: string }
+        - in: query
+          name: active
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: GLOBAL TaskTemplate 清單
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskTemplatePage' }
+    post:
+      tags: [SystemTemplates]
+      summary: 建立 GLOBAL TaskTemplate(ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTaskTemplateRequest' }
+      responses:
+        '201':
+          description: 已建立
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskTemplate' }
+
+  /system/task-templates/{templateId}:
+    parameters:
+      - $ref: '#/components/parameters/TemplateIdParam'
+    get:
+      tags: [SystemTemplates]
+      summary: 讀取 GLOBAL TaskTemplate
+      parameters:
+        - in: query
+          name: version
+          schema: { type: integer }
+      responses:
+        '200':
+          description: TaskTemplate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskTemplate' }
+    patch:
+      tags: [SystemTemplates]
+      summary: 更新 GLOBAL TaskTemplate(ADMIN;產生新 version)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateTaskTemplateRequest' }
+      responses:
+        '200':
+          description: 新 version 已建立
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskTemplate' }
+    delete:
+      tags: [SystemTemplates]
+      summary: Deactivate GLOBAL TaskTemplate(ADMIN)
+      responses:
+        '204': { description: No Content }
+
+  # ===================== Fork from Global to ORG =====================
+  /orgs/{orgId}/project-templates/fork-from-global/{globalTplId}:
+    parameters:
+      - $ref: '#/components/parameters/OrgIdParam'
+      - in: path
+        name: globalTplId
+        required: true
+        schema: { type: string }
+    post:
+      tags: [ProjectTemplates]
+      summary: 從 GLOBAL ProjectTemplate Fork 為 ORG-scoped(獨立 version chain)
+      description: |
+        將指定 GLOBAL ProjectTemplate 深拷貝為當前 root org 的 ORG ProjectTemplate(version=1)。
+        Fork 後完全脫鉤,GLOBAL 後續演進不影響此 ORG 副本。
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code: { type: string, description: ORG 副本的 code(預設沿用 GLOBAL code) }
+                name: { type: string, description: 覆寫名稱 }
+      responses:
+        '201':
+          description: 已 fork
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectTemplate' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /orgs/{orgId}/task-templates/fork-from-global/{globalTplId}:
+    parameters:
+      - $ref: '#/components/parameters/OrgIdParam'
+      - in: path
+        name: globalTplId
+        required: true
+        schema: { type: string }
+    post:
+      tags: [TaskTemplates]
+      summary: 從 GLOBAL TaskTemplate Fork 為 ORG-scoped
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code: { type: string }
+                name: { type: string }
+      responses:
+        '201':
+          description: 已 fork
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskTemplate' }
+
+  # ===================== ProjectTemplates (ORG) =====================
+  /orgs/{orgId}/project-templates:
+    parameters:
+      - $ref: '#/components/parameters/OrgIdParam'
+    get:
+      tags: [ProjectTemplates]
+      summary: 列出 ORG ProjectTemplate(同 root org)
+      parameters:
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - in: query
+          name: tag
+          schema: { type: string }
+        - in: query
+          name: active
+          schema: { type: boolean }
+        - in: query
+          name: q
+          schema: { type: string }
+        - in: query
+          name: includeGlobal
+          schema: { type: boolean, default: false }
+          description: 是否同時回傳 GLOBAL Templates(GROUP_ADMIN 找範本時方便)
+      responses:
+        '200':
+          description: ProjectTemplate 清單
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectTemplatePage' }
+    post:
+      tags: [ProjectTemplates]
+      summary: 建立 ProjectTemplate(version=1)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProjectTemplateRequest' }
+      responses:
+        '201':
+          description: 已建立
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectTemplate' }
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /orgs/{orgId}/project-templates/{templateId}:
+    parameters:
+      - $ref: '#/components/parameters/OrgIdParam'
+      - $ref: '#/components/parameters/TemplateIdParam'
+    get:
+      tags: [ProjectTemplates]
+      summary: 讀取 ProjectTemplate
+      parameters:
+        - in: query
+          name: version
+          schema: { type: integer }
+          description: 指定版本(預設最新)
+      responses:
+        '200':
+          description: ProjectTemplate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectTemplate' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [ProjectTemplates]
+      summary: 更新 ProjectTemplate(產生新 version)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProjectTemplateRequest' }
+      responses:
+        '200':
+          description: 新 version 已建立
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectTemplate' }
+    delete:
+      tags: [ProjectTemplates]
+      summary: Deactivate ProjectTemplate(軟性,設 active=false)
+      responses:
+        '204': { description: No Content }
+
+  # ===================== TaskTemplates =====================
+  /orgs/{orgId}/task-templates:
+    parameters:
+      - $ref: '#/components/parameters/OrgIdParam'
+    get:
+      tags: [TaskTemplates]
+      summary: 列出 ORG TaskTemplate(同 root org)
+      parameters:
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - in: query
+          name: type
+          schema: { type: string }
+        - in: query
+          name: tag
+          schema: { type: string }
+        - in: query
+          name: active
+          schema: { type: boolean }
+        - in: query
+          name: includeGlobal
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: TaskTemplate 清單
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskTemplatePage' }
+    post:
+      tags: [TaskTemplates]
+      summary: 建立 TaskTemplate(version=1)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTaskTemplateRequest' }
+      responses:
+        '201':
+          description: 已建立
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskTemplate' }
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /orgs/{orgId}/task-templates/{templateId}:
+    parameters:
+      - $ref: '#/components/parameters/OrgIdParam'
+      - $ref: '#/components/parameters/TemplateIdParam'
+    get:
+      tags: [TaskTemplates]
+      summary: 讀取 TaskTemplate
+      parameters:
+        - in: query
+          name: version
+          schema: { type: integer }
+      responses:
+        '200':
+          description: TaskTemplate
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskTemplate' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [TaskTemplates]
+      summary: 更新 TaskTemplate(產生新 version)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateTaskTemplateRequest' }
+      responses:
+        '200':
+          description: 新 version 已建立
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskTemplate' }
+    delete:
+      tags: [TaskTemplates]
+      summary: Deactivate TaskTemplate(設 active=false)
+      responses:
+        '204': { description: No Content }
+
+  # ===================== Users =====================
+  /users:
+    get:
+      tags: [Users]
+      summary: 列出使用者(同 root org)
+      parameters:
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/FieldsParam'
+        - in: query
+          name: q
+          schema: { type: string }
+          description: accountName / 名稱 / Email / 工號關鍵字
+        - in: query
+          name: accountName
+          schema: { type: string, maxLength: 30 }
+          description: 精確 accountName 搜尋
+        - in: query
+          name: role
+          schema: { $ref: '#/components/schemas/Role' }
+        - in: query
+          name: groupId
+          schema: { type: string }
+          description: 過濾屬於某 Group 的 active 成員
+        - in: query
+          name: organizationId
+          schema: { type: string }
+          description: 過濾屬於某 leaf Org(以 GroupMembership 計算)的 user
+        - in: query
+          name: active
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: 使用者清單
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPage'
+    post:
+      tags: [Users]
+      summary: 建立使用者(以 accountName 從 HR 同步建立;ORG_ADMIN / ADMIN)
+      description: |
+        Server 會以 `accountName` 呼叫 HR 服務驗證該員工存在且在職;HR 無此 accountName 則 422,HR 不可達則 503。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: 已建立(本地投影)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '503':
+          description: HR 服務暫時不可達
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /users/{userId}:
+    parameters:
+      - $ref: '#/components/parameters/UserIdParam'
+    get:
+      tags: [Users]
+      summary: 讀取單一使用者
+      responses:
+        '200':
+          description: User
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Users]
+      summary: 更新使用者(ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: 已更新
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+    delete:
+      tags: [Users]
+      summary: 軟刪除使用者(ADMIN)
+      responses:
+        '204': { description: No Content }
+
+  /users/{userId}/sync-from-hr:
+    parameters:
+      - $ref: '#/components/parameters/UserIdParam'
+    post:
+      tags: [Users]
+      summary: 手動觸發 HR 同步(ORG_ADMIN / ADMIN)
+      description: |
+        從 HR 服務拉取最新 profile,overwrite 本地 snapshot 欄位 + 更新 `hrSyncedAt`。
+        若 HR 標記離職,連動 deactivate user 並移除所有 active GroupMembership。
+      responses:
+        '200':
+          description: 已同步
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '503':
+          description: HR 服務暫時不可達
+
+  /users/{userId}/org-manager-scopes:
+    parameters:
+      - $ref: '#/components/parameters/UserIdParam'
+    get:
+      tags: [Users]
+      summary: 取得 user 的 ORG_MANAGER 範圍(衍生欄位;v1.3 改為唯讀)
+      description: |
+        **v1.3 變更**:本欄位於 v1.3 改為衍生 / cache 欄位(對應 INV-34)。
+        欲變更某 user 為哪個節點的 manager,請使用 `POST /orgs/{orgId}/transfer-manager`;
+        本系統 reactor 會自動同步 `User.orgManagerScopes[]` cache。
+      responses:
+        '200':
+          description: 該 user 目前的 ORG_MANAGER scope 清單
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orgIds:
+                    type: array
+                    items: { type: string }
+
+  # ===================== Projects =====================
+  /projects:
+    get:
+      tags: [Projects]
+      summary: 列出 Project(僅限同 orgId)
+      parameters:
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/FieldsParam'
+        - $ref: '#/components/parameters/SinceParam'
+        - in: query
+          name: status
+          schema: { $ref: '#/components/schemas/ProjectStatus' }
+        - in: query
+          name: ownerId
+          schema: { type: string }
+        - in: query
+          name: memberId
+          schema: { type: string }
+        - in: query
+          name: groupId
+          schema: { type: string }
+          description: 過濾屬於某個 Group 的 Project
+        - in: query
+          name: tag
+          schema: { type: string }
+        - in: query
+          name: q
+          schema: { type: string }
+      responses:
+        '200':
+          description: Project 清單
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPage' }
+    post:
+      tags: [Projects]
+      summary: 建立 Project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProjectRequest' }
+      responses:
+        '201':
+          description: 已建立
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /projects/{projectId}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectIdParam'
+    get:
+      tags: [Projects]
+      summary: 讀取單一 Project
+      responses:
+        '200':
+          description: Project
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+          headers:
+            ETag:
+              schema: { type: string }
+              description: 內容指紋,供條件式請求
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Projects]
+      summary: 更新 Project 基本欄位
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProjectRequest' }
+      responses:
+        '200':
+          description: 已更新
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+    delete:
+      tags: [Projects]
+      summary: 軟刪除 Project
+      responses:
+        '204': { description: No Content }
+
+  /projects/{projectId}/status:
+    parameters:
+      - $ref: '#/components/parameters/ProjectIdParam'
+    post:
+      tags: [Projects]
+      summary: 變更 Project 狀態
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: '#/components/schemas/ProjectStatus' }
+                reason: { type: string }
+      responses:
+        '200':
+          description: 已變更
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /projects/{projectId}/owner:
+    parameters:
+      - $ref: '#/components/parameters/ProjectIdParam'
+    post:
+      tags: [Projects]
+      summary: 變更 Project 負責人
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [newOwnerId]
+              properties:
+                newOwnerId: { type: string }
+                reason: { type: string }
+      responses:
+        '200':
+          description: 已變更
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+
+  /projects/{projectId}/members:
+    parameters:
+      - $ref: '#/components/parameters/ProjectIdParam'
+    get:
+      tags: [Memberships]
+      summary: 列出 Project 成員
+      responses:
+        '200':
+          description: 成員清單
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Membership' }
+    post:
+      tags: [Memberships]
+      summary: 加入成員
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId]
+              properties:
+                userId: { type: string }
+                role: { $ref: '#/components/schemas/MembershipRole' }
+      responses:
+        '201':
+          description: 已加入
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Membership' }
+
+  /projects/{projectId}/members/{userId}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectIdParam'
+      - $ref: '#/components/parameters/UserIdParam'
+    delete:
+      tags: [Memberships]
+      summary: 移除成員
+      responses:
+        '204': { description: No Content }
+
+  /projects/{projectId}/history:
+    parameters:
+      - $ref: '#/components/parameters/ProjectIdParam'
+    get:
+      tags: [Projects]
+      summary: 列出 Project 變更歷程
+      parameters:
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: 歷程
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/HistoryEntry' }
+
+  # ===================== Tasks =====================
+  /tasks:
+    get:
+      tags: [Tasks]
+      summary: 列出 Task(可跨 Project,僅限同 orgId)
+      parameters:
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/FieldsParam'
+        - $ref: '#/components/parameters/SinceParam'
+        - in: query
+          name: projectId
+          schema: { type: string }
+        - in: query
+          name: groupId
+          schema: { type: string }
+          description: 過濾所屬 Project 包含此 Group(透過 Project.groupIds)
+        - in: query
+          name: status
+          schema: { $ref: '#/components/schemas/TaskStatus' }
+        - in: query
+          name: priority
+          schema: { $ref: '#/components/schemas/Priority' }
+        - in: query
+          name: ownerId
+          schema: { type: string }
+        - in: query
+          name: assigneeId
+          schema: { type: string }
+          description: 過濾 assignees 包含此 user
+        - in: query
+          name: type
+          schema: { type: string }
+        - in: query
+          name: tag
+          schema: { type: string }
+        - in: query
+          name: dueBefore
+          schema: { type: string, format: date-time }
+        - in: query
+          name: dueAfter
+          schema: { type: string, format: date-time }
+        - in: query
+          name: q
+          schema: { type: string }
+          description: 全文檢索(標題、描述)
+        - in: query
+          name: includeDeleted
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Task 清單
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskPage' }
+    post:
+      tags: [Tasks]
+      summary: 建立 Task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTaskRequest' }
+      responses:
+        '201':
+          description: 已建立
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /tasks/{taskId}:
+    parameters:
+      - $ref: '#/components/parameters/TaskIdParam'
+    get:
+      tags: [Tasks]
+      summary: 讀取單一 Task
+      parameters:
+        - in: header
+          name: If-None-Match
+          schema: { type: string }
+          description: 若 ETag 相符回 304
+      responses:
+        '200':
+          description: Task
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+          headers:
+            ETag:
+              schema: { type: string }
+        '304':
+          description: Not Modified
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Tasks]
+      summary: 更新 Task 內容(不含指派 / 狀態)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateTaskRequest' }
+      responses:
+        '200':
+          description: 已更新
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+    delete:
+      tags: [Tasks]
+      summary: 軟刪除 Task
+      responses:
+        '204': { description: No Content }
+
+  /tasks/{taskId}/status:
+    parameters:
+      - $ref: '#/components/parameters/TaskIdParam'
+    post:
+      tags: [Tasks]
+      summary: 變更 Task 狀態
+      description: |
+        - 若 `task.qaReviewPolicy.dualSignRequired = true`,則 `IN_PROGRESS → DONE` 直推路徑被禁止(INV-6),
+          必須走 `IN_REVIEW` + `POST /tasks/{id}/review` 蒐集完成。
+        - **GROUP_MANAGER 可強制 force-complete**:於 dualSignRequired = true 的 Task 直接 `IN_PROGRESS → DONE` 時,
+          server 會檢查 actor 是否具 GROUP_MANAGER 角色 + body 必須附 `bypassReason`(以 `reason` 欄位提供;
+          force-complete 場景 reason 為**必填**;否則 422)。
+          此情境下 `factory-ops.task.completed` 事件 payload 帶 `bypassed: true`。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: '#/components/schemas/TaskStatus' }
+                reason:
+                  type: string
+                  description: |
+                    一般狀態變更為選填;當 force-complete 帶雙簽 Task 時為**必填**(作為 bypassReason 寫入 history payload)。
+      responses:
+        '200':
+          description: 已變更
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /tasks/{taskId}/assignees:
+    parameters:
+      - $ref: '#/components/parameters/TaskIdParam'
+    post:
+      tags: [Tasks]
+      summary: 加入指派人(批次)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userIds]
+              properties:
+                userIds:
+                  type: array
+                  minItems: 1
+                  items: { type: string }
+      responses:
+        '200':
+          description: 已更新
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+
+  /tasks/{taskId}/assignees/{userId}:
+    parameters:
+      - $ref: '#/components/parameters/TaskIdParam'
+      - $ref: '#/components/parameters/UserIdParam'
+    delete:
+      tags: [Tasks]
+      summary: 移除指派人
+      description: 不能移除目前的 ownerId(會回 409)
+      responses:
+        '200':
+          description: 已更新
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /tasks/{taskId}/owner:
+    parameters:
+      - $ref: '#/components/parameters/TaskIdParam'
+    post:
+      tags: [Tasks]
+      summary: 移轉 Task 負責人
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [newOwnerId]
+              properties:
+                newOwnerId: { type: string }
+                keepPreviousOwnerAsAssignee:
+                  type: boolean
+                  default: true
+                reason: { type: string }
+      responses:
+        '200':
+          description: 已移轉
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+
+  /tasks/{taskId}/review:
+    parameters:
+      - $ref: '#/components/parameters/TaskIdParam'
+    post:
+      tags: [Tasks]
+      summary: QA 雙簽 Review action(IN_REVIEW → DONE 流程;v1.3 新增)
+      description: |
+        - 必要前置:`task.status == IN_REVIEW`,且 `task.qaReviewPolicy.dualSignRequired == true`(否則 409)。
+        - actor 必須具備 body.role 角色,且 body.role ∈ `task.qaReviewPolicy.requiredReviewerRoles`(否則 403 / 422)。
+        - 同 (taskId, reviewerId, role) 不可重複(否則 409 `review_already_submitted`)。
+        - 同一 user 不可同時以多個角色滿足同一 Task 的 review(INV-36)。
+        - **APPROVED**:append `qaReviews[]` 一筆;若蒐集完 policy 要求的所有 role 則 server 自動推進 status = DONE 並 emit `factory-ops.task.completed`。
+        - **REJECTED**:append + status 回退至 IN_PROGRESS;預設清空既往 reviews(語意「重新走流程」;Q-21 待確認)。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TaskReviewRequest' }
+      responses:
+        '200':
+          description: 已記錄 review;若蒐集完成 status 推進至 DONE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /tasks/{taskId}/comments:
+    parameters:
+      - $ref: '#/components/parameters/TaskIdParam'
+    get:
+      tags: [Comments]
+      summary: 列出 Task 留言
+      parameters:
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: 留言
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Comment' }
+    post:
+      tags: [Comments]
+      summary: 新增留言
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCommentRequest' }
+      responses:
+        '201':
+          description: 已新增
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Comment' }
+
+  /tasks/{taskId}/comments/{commentId}:
+    parameters:
+      - $ref: '#/components/parameters/TaskIdParam'
+      - in: path
+        name: commentId
+        required: true
+        schema: { type: string }
+    patch:
+      tags: [Comments]
+      summary: 編輯留言(限作者本人)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bodyMarkdown]
+              properties:
+                bodyMarkdown: { type: string }
+      responses:
+        '200':
+          description: 已編輯
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Comment' }
+    delete:
+      tags: [Comments]
+      summary: 軟刪除留言
+      responses:
+        '204': { description: No Content }
+
+  /tasks/{taskId}/history:
+    parameters:
+      - $ref: '#/components/parameters/TaskIdParam'
+    get:
+      tags: [Tasks]
+      summary: 列出 Task 變更歷程
+      responses:
+        '200':
+          description: 歷程
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/HistoryEntry' }
+
+  /task-types:
+    get:
+      tags: [Tasks]
+      summary: 列出系統支援的 Task 型態與其 attributes JSON Schema
+      responses:
+        '200':
+          description: Task 型態清單
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TaskTypeDefinition' }
+
+  # ===================== ActionRequests =====================
+  /action-requests:
+    get:
+      tags: [ActionRequests]
+      summary: 列出 ActionRequest
+      parameters:
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/FieldsParam'
+        - in: query
+          name: projectId
+          schema: { type: string }
+        - in: query
+          name: status
+          schema: { $ref: '#/components/schemas/ActionRequestStatus' }
+        - in: query
+          name: severity
+          schema: { $ref: '#/components/schemas/SeverityLevel' }
+        - in: query
+          name: requesterId
+          schema: { type: string }
+      responses:
+        '200':
+          description: ActionRequest 清單
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionRequestPage' }
+    post:
+      tags: [ActionRequests]
+      summary: 提交 ActionRequest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateActionRequestRequest' }
+      responses:
+        '201':
+          description: 已提交
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionRequest' }
+
+  /action-requests/{actionRequestId}:
+    parameters:
+      - in: path
+        name: actionRequestId
+        required: true
+        schema: { type: string }
+    get:
+      tags: [ActionRequests]
+      summary: 讀取單一 ActionRequest
+      responses:
+        '200':
+          description: ActionRequest
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionRequest' }
+    patch:
+      tags: [ActionRequests]
+      summary: 更新內容
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateActionRequestRequest' }
+      responses:
+        '200':
+          description: 已更新
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionRequest' }
+    delete:
+      tags: [ActionRequests]
+      summary: 軟刪除
+      responses:
+        '204': { description: No Content }
+
+  /action-requests/{actionRequestId}/status:
+    parameters:
+      - in: path
+        name: actionRequestId
+        required: true
+        schema: { type: string }
+    post:
+      tags: [ActionRequests]
+      summary: 變更狀態
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: '#/components/schemas/ActionRequestStatus' }
+                reason: { type: string }
+      responses:
+        '200':
+          description: 已變更
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionRequest' }
+
+  # /action-requests/{actionRequestId}/relay
+  # ★ v1.3 已移除(Q-14 拍板:targetOrgId 必為 leaf,改為 single-hop direct dispatch;見 ADR-0008 v1.3)
+
+  /action-requests/{actionRequestId}/convert-to-task:
+    parameters:
+      - in: path
+        name: actionRequestId
+        required: true
+        schema: { type: string }
+    post:
+      tags: [ActionRequests]
+      summary: 將 ActionRequest 轉換為 Task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConvertActionRequestToTaskRequest' }
+      responses:
+        '201':
+          description: 已轉換,回傳新 Task
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Task' }
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  # ===================== Attachments =====================
+  /attachments:
+    post:
+      tags: [Attachments]
+      summary: 建立附件 metadata 並取得上傳用 presigned URL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAttachmentRequest' }
+      responses:
+        '201':
+          description: 已建立 metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttachmentUploadTicket' }
+
+  /attachments/{attachmentId}:
+    parameters:
+      - in: path
+        name: attachmentId
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Attachments]
+      summary: 取得附件 metadata + 下載 URL
+      responses:
+        '200':
+          description: Attachment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Attachment' }
+    delete:
+      tags: [Attachments]
+      summary: 軟刪除附件
+      responses:
+        '204': { description: No Content }
+
+  /attachments/{attachmentId}/finalize:
+    parameters:
+      - in: path
+        name: attachmentId
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Attachments]
+      summary: 上傳完成後通知系統(觸發 checksum / 病毒掃描)
+      responses:
+        '200':
+          description: 已 finalize
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Attachment' }
+
+  # ===================== Webhooks =====================
+  /webhooks:
+    get:
+      tags: [Webhooks]
+      summary: 列出已註冊 webhook(預留)
+      responses:
+        '200':
+          description: Webhook 清單
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Webhook' }
+    post:
+      tags: [Webhooks]
+      summary: 註冊 webhook(預留)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateWebhookRequest' }
+      responses:
+        '201':
+          description: 已註冊
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Webhook' }
+
+  /webhooks/{webhookId}:
+    parameters:
+      - in: path
+        name: webhookId
+        required: true
+        schema: { type: string }
+    delete:
+      tags: [Webhooks]
+      summary: 移除 webhook
+      responses:
+        '204': { description: No Content }
+
+# =========================================================
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    OrgIdParam:
+      in: path
+      name: orgId
+      required: true
+      schema: { type: string }
+      description: |
+        Organization ID。在 `/orgs/{orgId}/...` 子路徑中,根據端點語意可能是 root org 或 任一節點:
+        - `/orgs/{orgId}/groups`、`/orgs/{orgId}/project-templates` 等管理面 API:`orgId` 為 **rootOrgId**
+        - `/orgs/{orgId}/dispatch-action-request`、`/orgs/{orgId}/transfer-leader`:`orgId` 為**特定節點**(可能任一層)
+    GroupIdParam:
+      in: path
+      name: groupId
+      required: true
+      schema: { type: string }
+    TemplateIdParam:
+      in: path
+      name: templateId
+      required: true
+      schema: { type: string }
+    ProjectIdParam:
+      in: path
+      name: projectId
+      required: true
+      schema: { type: string }
+    TaskIdParam:
+      in: path
+      name: taskId
+      required: true
+      schema: { type: string }
+    UserIdParam:
+      in: path
+      name: userId
+      required: true
+      schema: { type: string }
+    CursorParam:
+      in: query
+      name: cursor
+      schema: { type: string }
+      description: cursor-based pagination 游標
+    LimitParam:
+      in: query
+      name: limit
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    FieldsParam:
+      in: query
+      name: fields
+      schema: { type: string }
+      description: 逗號分隔的欄位投影,例 `id,title,status,ownerId`
+    SinceParam:
+      in: query
+      name: since
+      schema: { type: string, format: date-time }
+      description: 增量同步起始時間(以 updatedAt 比對)
+
+  responses:
+    Unauthorized:
+      description: 未認證
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: 無權限
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: 找不到資源
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: 業務規則衝突(狀態流、唯一性)
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    ValidationError:
+      description: 輸入驗證失敗
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ValidationProblem' }
+
+  schemas:
+    # ---------- 共通 ----------
+    Problem:
+      description: RFC 7807 problem details
+      type: object
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+        traceId: { type: string }
+      required: [title, status]
+
+    ValidationProblem:
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          properties:
+            errors:
+              type: array
+              items:
+                type: object
+                properties:
+                  field: { type: string }
+                  code: { type: string }
+                  message: { type: string }
+
+    PageInfo:
+      type: object
+      properties:
+        nextCursor: { type: string, nullable: true }
+        hasMore: { type: boolean }
+
+    HistoryEntry:
+      type: object
+      properties:
+        actorId: { type: string }
+        action: { type: string, example: TASK_STATUS_CHANGED }
+        at: { type: string, format: date-time }
+        payload:
+          type: object
+          additionalProperties: true
+
+    AttachmentRef:
+      type: object
+      required: [attachmentId]
+      properties:
+        attachmentId: { type: string }
+        alt: { type: string }
+        role:
+          type: string
+          enum: [INLINE, ATTACHMENT, COVER]
+          default: ATTACHMENT
+
+    TimeRange:
+      type: object
+      properties:
+        start: { type: string, format: date-time, nullable: true }
+        due: { type: string, format: date-time, nullable: true }
+
+    # ---------- Auth ----------
+    LoginRequest:
+      type: object
+      required: [accountName, password]
+      properties:
+        accountName: { type: string, maxLength: 30, description: HR 識別字 }
+        password: { type: string, format: password }
+
+    TokenPair:
+      type: object
+      required: [accessToken, refreshToken, expiresIn, tokenType]
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        expiresIn: { type: integer, description: access token 秒數 }
+        tokenType: { type: string, example: Bearer }
+
+    # ---------- Enums ----------
+    Role:
+      type: string
+      enum: [OPERATOR, SHIFT_LEAD, ENGINEER, QA, GROUP_ADMIN, GROUP_MANAGER, ORG_MANAGER, ORG_ADMIN, ADMIN]
+      description: |
+        - `OPERATOR` / `SHIFT_LEAD` / `ENGINEER` / `QA`:第一線執行
+        - `GROUP_ADMIN`:Group 內 Template 與成員角色設定;Group settings(含 QA 雙簽)維護
+        - `GROUP_MANAGER`:Group 經理,可指派 GROUP_ADMIN 代理;Group settings 最終設定權;權限 ⊇ GROUP_ADMIN
+        - `ORG_MANAGER`:某 Organization 節點的唯一經理(衍生自 `Organization.managerId == userId`);可直接派 ActionRequest 到其子孫中的 leaf Org
+        - `ORG_ADMIN`:該 root org 的最高權限;管理 Org 樹 / users / managers / leaders
+        - `ADMIN`:系統管理員(SaaS 維運),唯一可維護 GLOBAL Templates
+        > v1.3 注意:`ORG_MANAGER` 為衍生角色,不應由前端直接寫入 `User.roles[]`;由 server 從 `Organization.managerId` 反查並維護 `User.orgManagerScopes[]` 衍生欄位。
+
+    OrganizationType:
+      type: string
+      description: Organization 多型 discriminator;內建型態,leaf 由 root settings.leafTypes 決定
+      enum: [FAB, DIVISION, DEPARTMENT, SECTION]
+
+    GroupType:
+      type: string
+      description: Group 多型 discriminator;Group 為平面結構,屬唯一 leaf Organization
+      enum: [DEFAULT, LINE, TEAM, SHIFT]
+
+    TemplateScope:
+      type: string
+      enum: [GLOBAL, ORG]
+      description: GLOBAL 由 ADMIN 維護,所有 Org 可見;ORG 屬某 root org
+
+    GroupMembershipRole:
+      type: string
+      enum: [MEMBER, LEAD, OBSERVER]
+
+    MembershipRole:
+      type: string
+      enum: [MEMBER, LEAD, OBSERVER]
+
+    ProjectStatus:
+      type: string
+      enum: [DRAFT, ACTIVE, PAUSED, COMPLETED, CANCELLED]
+
+    TaskStatus:
+      type: string
+      enum: [OPEN, IN_PROGRESS, BLOCKED, IN_REVIEW, DONE, CANCELLED]
+
+    Priority:
+      type: string
+      enum: [LOW, NORMAL, HIGH, URGENT]
+
+    ActionRequestStatus:
+      type: string
+      enum: [SUBMITTED, TRIAGED, IN_PROGRESS, RESOLVED, REJECTED]
+
+    SeverityLevel:
+      type: string
+      enum: [LOW, MEDIUM, HIGH, CRITICAL]
+
+    # ---------- Organization ----------
+    Organization:
+      type: object
+      properties:
+        id: { type: string }
+        rootOrgId: { type: string, description: 該節點所屬樹的 root;root 自己時等於 id }
+        parentId: { type: string, nullable: true, description: null 僅 root }
+        type:
+          oneOf:
+            - $ref: '#/components/schemas/OrganizationType'
+            - type: string
+              description: 自訂 type code(由 root settings 擴展)
+        name: { type: string, description: 允許 Unicode 多語系混合輸入 }
+        code: { type: string, description: 同 rootOrgId 內 unique }
+        managerId:
+          type: string
+          nullable: true
+          description: |
+            該節點唯一經理(對應 ORG_MANAGER 角色;v1.3 新欄位)。
+            為跨層 ActionRequest dispatch 授權的權威來源;`User.orgManagerScopes[]` 由此反查衍生。
+        leaderIds:
+          type: array
+          description: |
+            該節點業務負責人列表(0..N;v1.3 新欄位,取代 v1.2 leaderId 單值)。
+            ActionRequest dispatch 預設 ownerId 從此集合中選(0 → 409,1 → 自動,N → 派工方指定)。
+          items: { type: string }
+        isLeaf: { type: boolean, description: 衍生欄位:type ∈ root.settings.leafTypes }
+        depth: { type: integer, description: 衍生欄位:從 root 的距離(0 = root) }
+        path: { type: string, description: 衍生欄位:`/<rootId>/.../<self>`(materialized,可選) }
+        timezone: { type: string, example: Asia/Taipei, description: 僅 root 有效 }
+        locale: { type: string, example: zh-TW, description: 僅 root 有效 }
+        settings:
+          allOf:
+            - $ref: '#/components/schemas/OrgSettings'
+          nullable: true
+          description: 僅 root 有效
+        createdAt: { type: string, format: date-time, description: ISO 8601 + offset }
+        updatedAt: { type: string, format: date-time, description: ISO 8601 + offset }
+        deletedAt: { type: string, format: date-time, nullable: true }
+        schemaVersion: { type: integer }
+      required: [id, rootOrgId, type, name, code]
+
+    OrgSettings:
+      type: object
+      properties:
+        orgMaxDepth:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 5
+          description: Organization 樹最大深度
+        leafTypes:
+          type: array
+          items: { type: string }
+          default: [SECTION]
+          description: 哪些 type code 視為 leaf(可承載 Group / Project / Task)
+        attachmentMaxBytes:
+          type: integer
+          format: int64
+          example: 52428800
+        extras:
+          type: object
+          additionalProperties: true
+
+    CreateOrganizationRequest:
+      type: object
+      required: [type, name, code]
+      properties:
+        parentId:
+          type: string
+          nullable: true
+          description: null 表示建立 root(僅 ADMIN);其他需 ORG_ADMIN(同 root)
+        type: { type: string, description: FAB / DIVISION / DEPARTMENT / SECTION / 自訂 }
+        name: { type: string, minLength: 1, maxLength: 120, description: 允許 Unicode 多語系混合 }
+        code: { type: string, minLength: 1, maxLength: 64, pattern: '^[a-z0-9-]+$' }
+        managerId:
+          type: string
+          nullable: true
+          description: 建立時可選指定 manager(v1.3)
+        leaderIds:
+          type: array
+          description: 建立時可選指定 leaders(0..N;v1.3)
+          items: { type: string }
+        timezone: { type: string, default: Asia/Taipei, description: 僅建 root 時有效 }
+        locale: { type: string, default: zh-TW, description: 僅建 root 時有效 }
+        settings:
+          allOf:
+            - $ref: '#/components/schemas/OrgSettings'
+          nullable: true
+          description: 僅建 root 時有效
+        initialOrgAdmin:
+          type: object
+          description: 僅建 root 時提供;同步建立第一個 ORG_ADMIN 帳號
+          required: [accountName]
+          properties:
+            accountName:
+              type: string
+              maxLength: 30
+              description: 從 HR 服務拉取 profile
+
+    UpdateOrganizationRequest:
+      type: object
+      description: |
+        本端點不支援變更 `managerId` / `leaderIds[]`。
+        - `managerId` 變更請使用 `POST /orgs/{orgId}/transfer-manager`
+        - `leaderIds[]` 變更請使用 `POST /orgs/{orgId}/leaders` 與 `DELETE /orgs/{orgId}/leaders/{userId}`
+      properties:
+        name: { type: string }
+        parentId: { type: string, nullable: true, description: 變更會做 cycle / 深度檢查 }
+        type: { type: string }
+        timezone: { type: string, description: 僅 root 有效 }
+        locale: { type: string, description: 僅 root 有效 }
+        settings:
+          allOf:
+            - $ref: '#/components/schemas/OrgSettings'
+          description: 僅 root 有效
+
+    OrganizationPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Organization' }
+        pageInfo: { $ref: '#/components/schemas/PageInfo' }
+
+    # ---------- Group(平面)----------
+    Group:
+      type: object
+      properties:
+        id: { type: string }
+        rootOrgId: { type: string }
+        organizationId: { type: string, description: 必為 leaf Organization }
+        type:
+          oneOf:
+            - $ref: '#/components/schemas/GroupType'
+            - type: string
+              description: 自訂 type code
+        name: { type: string, description: 允許 Unicode 多語系 }
+        code: { type: string, description: 同 rootOrgId 內 unique }
+        attributes:
+          type: object
+          additionalProperties: true
+          description: type-specific 屬性(寬鬆 schema)
+        leaderId: { type: string, nullable: true, description: Group 內組長(與 Organization.leaderIds 為不同概念) }
+        settings:
+          $ref: '#/components/schemas/GroupSettings'
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        deletedAt: { type: string, format: date-time, nullable: true }
+        schemaVersion: { type: integer }
+      required: [id, rootOrgId, organizationId, type, name, code, settings]
+
+    GroupSettings:
+      type: object
+      description: Group-level 工作流客製設定(v1.3 新增,對應 ADR-0011)
+      required: [qa]
+      properties:
+        qa:
+          $ref: '#/components/schemas/QaSettings'
+        extras:
+          type: object
+          additionalProperties: true
+          description: 預留其他 Group-level 設定
+
+    QaSettings:
+      type: object
+      description: |
+        QA 雙簽設定。Task 建立時 snapshot 至 `task.qaReviewPolicy`,之後變更不影響該 Task。
+        AND 語意:requiredReviewerRoles 列示中的每個角色都需有人簽核才能 DONE(同 user 不可一次擔多角色)。
+      properties:
+        dualSignRequired:
+          type: boolean
+          default: false
+        requiredReviewerRoles:
+          type: array
+          description: |
+            必要 reviewer 角色清單。若 dualSignRequired=true 不可為空。
+            僅允許第一線角色:OPERATOR / SHIFT_LEAD / ENGINEER / QA / GROUP_ADMIN / GROUP_MANAGER
+          items: { $ref: '#/components/schemas/Role' }
+          default: []
+
+    UpdateGroupSettingsRequest:
+      type: object
+      description: PATCH Group settings;省略的子物件保持原值
+      properties:
+        qa:
+          $ref: '#/components/schemas/QaSettings'
+        extras:
+          type: object
+          additionalProperties: true
+
+    CreateGroupRequest:
+      type: object
+      required: [organizationId, type, name, code]
+      description: |
+        建立 Group。`settings` 預設為 `{ qa: { dualSignRequired: false, requiredReviewerRoles: [] }, extras: {} }`,
+        若需啟用 QA 雙簽請於建立後呼叫 `PATCH /orgs/{orgId}/groups/{groupId}/settings`。
+      properties:
+        organizationId: { type: string, description: 必為 leaf Organization }
+        type: { type: string }
+        name: { type: string, minLength: 1, maxLength: 120, description: 允許 Unicode 多語系 }
+        code: { type: string, minLength: 1, maxLength: 64 }
+        attributes:
+          type: object
+          additionalProperties: true
+        leaderId: { type: string, nullable: true, description: Group 內組長 }
+        settings:
+          allOf:
+            - $ref: '#/components/schemas/GroupSettings'
+          nullable: true
+          description: 建立時可指定 settings;省略則用預設值
+
+    UpdateGroupRequest:
+      type: object
+      properties:
+        type: { type: string }
+        name: { type: string }
+        attributes:
+          type: object
+          additionalProperties: true
+
+    GroupPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Group' }
+        pageInfo: { $ref: '#/components/schemas/PageInfo' }
+
+    GroupMembership:
+      type: object
+      properties:
+        id: { type: string }
+        rootOrgId: { type: string }
+        groupId: { type: string }
+        userId: { type: string }
+        role: { $ref: '#/components/schemas/GroupMembershipRole' }
+        joinedAt: { type: string, format: date-time }
+        leftAt: { type: string, format: date-time, nullable: true }
+        createdBy: { type: string }
+      required: [id, rootOrgId, groupId, userId, role, joinedAt]
+
+    # ---------- User(HR 投影)----------
+    User:
+      type: object
+      description: HR User 的本地投影;profile 欄位以 HR 為權威,roles / orgManagerScopes / GroupMembership 由本系統管理
+      properties:
+        id: { type: string }
+        rootOrgId: { type: string }
+        accountName:
+          type: string
+          maxLength: 30
+          description: HR 識別字;`(rootOrgId, accountName)` unique
+        employeeNo: { type: string, description: snapshot from HR }
+        email: { type: string, format: email, description: snapshot from HR }
+        displayName: { type: string, description: snapshot from HR }
+        roles:
+          type: array
+          items: { $ref: '#/components/schemas/Role' }
+        groupIds:
+          type: array
+          description: 衍生欄位:該 user 目前 active 屬於的 Group ID 集合
+          items: { type: string }
+        orgManagerScopes:
+          type: array
+          description: |
+            **衍生 / cache 欄位(v1.3)**:該 user 是哪些 Organization 節點的 `managerId`。
+            權威來源是 `Organization.managerId == userId` 反查;前端不可直接寫入(write-protected)。
+            授權判定可即時從 Organization 反查作為防呆,本欄位為 RBAC 加速 cache。
+          items: { type: string }
+        primaryOrgPath:
+          type: array
+          description: 衍生欄位:該 user 所屬 leaf Org 從 root 的路徑
+          items: { type: string }
+        hrSyncedAt: { type: string, format: date-time, description: 最近一次 HR 同步時間 }
+        active: { type: boolean, description: HR 標離職時 false }
+        createdAt: { type: string, format: date-time }
+      required: [id, rootOrgId, accountName, displayName, roles, active]
+
+    CreateUserRequest:
+      type: object
+      required: [accountName]
+      description: |
+        以 accountName 從 HR 拉取 profile 建立本地投影。
+        密碼若 SSO/HR 提供則由系統自動產生(初始密碼);否則由 ADMIN 提供初始暫時密碼。
+      properties:
+        accountName: { type: string, maxLength: 30 }
+        roles:
+          type: array
+          items: { $ref: '#/components/schemas/Role' }
+        initialPassword:
+          type: string
+          format: password
+          minLength: 12
+          description: 暫時密碼(若 HR/SSO 接管則可省略)
+
+    UpdateUserRequest:
+      type: object
+      description: 只能更新本系統獨有欄位;profile 欄位請以 HR 同步取得
+      properties:
+        roles:
+          type: array
+          items: { $ref: '#/components/schemas/Role' }
+        active: { type: boolean }
+
+    UserPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/User' }
+        pageInfo: { $ref: '#/components/schemas/PageInfo' }
+
+    # ---------- Project ----------
+    Project:
+      type: object
+      properties:
+        id: { type: string }
+        rootOrgId: { type: string }
+        organizationId: { type: string, description: 必為 leaf Organization }
+        name: { type: string }
+        descriptionMarkdown: { type: string }
+        status: { $ref: '#/components/schemas/ProjectStatus' }
+        ownerId: { type: string }
+        memberIds:
+          type: array
+          items: { type: string }
+        groupIds:
+          type: array
+          description: Project 所屬 Group(至少 1;MVP 必須屬同一 leaf Org)
+          minItems: 1
+          items: { type: string }
+        schedule: { $ref: '#/components/schemas/TimeRange' }
+        tags:
+          type: array
+          items: { type: string }
+        templateRef:
+          allOf:
+            - $ref: '#/components/schemas/TemplateRef'
+          nullable: true
+          description: 若由 ProjectTemplate 實例化則記錄 snapshot
+        overdue: { type: boolean, description: 衍生欄位:是否逾期(server 計算) }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        deletedAt: { type: string, format: date-time, nullable: true }
+        schemaVersion: { type: integer }
+      required: [id, rootOrgId, organizationId, name, status, ownerId, memberIds, groupIds]
+
+    CreateProjectRequest:
+      type: object
+      required: [organizationId, name, ownerId, groupIds]
+      properties:
+        organizationId: { type: string, description: 必為 leaf Organization }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        descriptionMarkdown: { type: string }
+        ownerId: { type: string }
+        memberIds:
+          type: array
+          items: { type: string }
+        groupIds:
+          type: array
+          minItems: 1
+          items: { type: string }
+        schedule: { $ref: '#/components/schemas/TimeRange' }
+        tags:
+          type: array
+          items: { type: string }
+        fromTemplateId:
+          type: string
+          description: 若指定,從 ProjectTemplate clone(含內含 TaskTemplate 實例化)
+        fromTemplateScope:
+          $ref: '#/components/schemas/TemplateScope'
+        fromTemplateVersion:
+          type: integer
+          description: 指定 Template version(預設最新 active version)
+
+    UpdateProjectRequest:
+      type: object
+      properties:
+        name: { type: string }
+        descriptionMarkdown: { type: string }
+        schedule: { $ref: '#/components/schemas/TimeRange' }
+        groupIds:
+          type: array
+          items: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+
+    ProjectPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Project' }
+        pageInfo: { $ref: '#/components/schemas/PageInfo' }
+
+    Membership:
+      type: object
+      properties:
+        id: { type: string }
+        rootOrgId: { type: string }
+        projectId: { type: string }
+        userId: { type: string }
+        role: { $ref: '#/components/schemas/MembershipRole' }
+        joinedAt: { type: string, format: date-time }
+
+    TemplateRef:
+      type: object
+      description: 由 Template 實例化時記錄的 snapshot,稽核用,不形成執行期相依
+      properties:
+        templateType:
+          type: string
+          enum: [PROJECT_TEMPLATE, TASK_TEMPLATE]
+        templateScope: { $ref: '#/components/schemas/TemplateScope' }
+        templateId: { type: string }
+        templateVersion: { type: integer }
+        instantiatedAt: { type: string, format: date-time }
+
+    # ---------- Task ----------
+    Task:
+      type: object
+      properties:
+        id: { type: string }
+        rootOrgId: { type: string }
+        projectId: { type: string }
+        type:
+          type: string
+          description: 多型 discriminator,例 EQUIPMENT_INSPECTION
+        attributes:
+          type: object
+          additionalProperties: true
+          description: type-specific 屬性,以對應 JSON Schema 驗證
+        title: { type: string, description: 允許 Unicode 多語系 }
+        descriptionMarkdown: { type: string }
+        status: { $ref: '#/components/schemas/TaskStatus' }
+        priority: { $ref: '#/components/schemas/Priority' }
+        ownerId: { type: string }
+        assignees:
+          type: array
+          minItems: 1
+          items: { type: string }
+        attachments:
+          type: array
+          items: { $ref: '#/components/schemas/AttachmentRef' }
+        schedule: { $ref: '#/components/schemas/TimeRange' }
+        completedAt: { type: string, format: date-time, nullable: true }
+        originActionRequestId: { type: string, nullable: true }
+        templateRef:
+          allOf:
+            - $ref: '#/components/schemas/TemplateRef'
+          nullable: true
+        qaReviewPolicy:
+          $ref: '#/components/schemas/QaReviewPolicy'
+        qaReviews:
+          type: array
+          description: append-only QA 雙簽簽核紀錄(v1.3 新增)
+          items: { $ref: '#/components/schemas/QaReviewEntry' }
+        tags:
+          type: array
+          items: { type: string }
+        overdue: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        deletedAt: { type: string, format: date-time, nullable: true }
+        schemaVersion: { type: integer }
+      required: [id, rootOrgId, projectId, type, title, status, priority, ownerId, assignees, qaReviewPolicy]
+
+    QaReviewPolicy:
+      type: object
+      description: |
+        Task 建立時(或 ActionRequest convert 時)從所屬 Project.groupIds[].settings.qa 合併 snapshot 的政策。
+        後續 Group settings 變更**不影響**本 Task(對應 INV-31)。
+        多 Group 合併規則:dualSignRequired = OR(各 group);requiredReviewerRoles = 各 group 的聯集去重。
+      required: [dualSignRequired, requiredReviewerRoles, snapshotAt]
+      properties:
+        dualSignRequired: { type: boolean }
+        requiredReviewerRoles:
+          type: array
+          items: { $ref: '#/components/schemas/Role' }
+        snapshotAt: { type: string, format: date-time, description: snapshot 時間(ISO 8601 + offset) }
+        sourceGroupIds:
+          type: array
+          description: 來源 Group ID 清單(稽核用)
+          items: { type: string }
+
+    QaReviewEntry:
+      type: object
+      description: 一筆 QA review action 記錄
+      required: [reviewerId, reviewerRole, decision, at]
+      properties:
+        reviewerId: { type: string }
+        reviewerRole: { $ref: '#/components/schemas/Role' }
+        decision: { $ref: '#/components/schemas/ReviewDecision' }
+        reason: { type: string }
+        at: { type: string, format: date-time }
+
+    ReviewDecision:
+      type: string
+      enum: [APPROVED, REJECTED]
+
+    TaskReviewRequest:
+      type: object
+      required: [decision, role]
+      properties:
+        decision: { $ref: '#/components/schemas/ReviewDecision' }
+        role:
+          allOf:
+            - $ref: '#/components/schemas/Role'
+          description: |
+            reviewer 主張此次 review 套用的角色。
+            必須 ∈ task.qaReviewPolicy.requiredReviewerRoles 且 actor 具備該角色。
+        reason:
+          type: string
+          description: 決議原因(REJECTED 時建議填寫)
+
+    CreateTaskRequest:
+      type: object
+      required: [projectId, type, title, ownerId, assignees]
+      description: |
+        建立 Task。
+        - **`qaReviewPolicy` 由 server 自動 snapshot**(從 Project.groupIds[].settings.qa 合併);客戶端**不可**在 request 提供。
+        - `ownerId` 必須 ∈ `assignees[]`(INV-1)。
+      properties:
+        projectId: { type: string }
+        type: { type: string }
+        attributes:
+          type: object
+          additionalProperties: true
+        title: { type: string, minLength: 1, maxLength: 200 }
+        descriptionMarkdown: { type: string }
+        priority:
+          $ref: '#/components/schemas/Priority'
+        ownerId: { type: string }
+        assignees:
+          type: array
+          minItems: 1
+          items: { type: string }
+        attachments:
+          type: array
+          items: { $ref: '#/components/schemas/AttachmentRef' }
+        schedule: { $ref: '#/components/schemas/TimeRange' }
+        tags:
+          type: array
+          items: { type: string }
+        fromTemplateId:
+          type: string
+          description: 若指定,從 TaskTemplate clone(預填 type / attributes / priority / description / checklist 等)
+        fromTemplateScope:
+          $ref: '#/components/schemas/TemplateScope'
+        fromTemplateVersion:
+          type: integer
+
+    UpdateTaskRequest:
+      type: object
+      properties:
+        title: { type: string }
+        descriptionMarkdown: { type: string }
+        priority: { $ref: '#/components/schemas/Priority' }
+        attributes:
+          type: object
+          additionalProperties: true
+        schedule: { $ref: '#/components/schemas/TimeRange' }
+        tags:
+          type: array
+          items: { type: string }
+        attachments:
+          type: array
+          items: { $ref: '#/components/schemas/AttachmentRef' }
+
+    TaskPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Task' }
+        pageInfo: { $ref: '#/components/schemas/PageInfo' }
+
+    TaskTypeDefinition:
+      type: object
+      properties:
+        type: { type: string, example: EQUIPMENT_INSPECTION }
+        label: { type: string, example: 設備檢查 }
+        description: { type: string }
+        attributesSchema:
+          type: object
+          description: 該型態 attributes 的 JSON Schema
+          additionalProperties: true
+        requiresReview:
+          type: boolean
+          description: 是否強制走 IN_REVIEW
+
+    # ---------- Templates ----------
+    ProjectTemplate:
+      type: object
+      properties:
+        id: { type: string }
+        scope: { $ref: '#/components/schemas/TemplateScope' }
+        rootOrgId:
+          type: string
+          nullable: true
+          description: GLOBAL scope 時為 null;ORG scope 時必填
+        name: { type: string }
+        code: { type: string, description: 同 (scope, rootOrgId) 內 unique }
+        descriptionMarkdown: { type: string }
+        defaultMemberRoles:
+          type: object
+          description: 角色配置(例 `{ ENGINEER: 1, OPERATOR: 2 }`)
+          additionalProperties:
+            type: integer
+            minimum: 0
+        taskTemplateRefs:
+          type: array
+          items: { $ref: '#/components/schemas/TaskTemplateRef' }
+        estimatedDurationDays: { type: integer, minimum: 0 }
+        tags:
+          type: array
+          items: { type: string }
+        forkedFrom:
+          allOf:
+            - $ref: '#/components/schemas/ForkRef'
+          nullable: true
+          description: 若由 GLOBAL fork 而來則記錄
+        version: { type: integer, minimum: 1 }
+        active: { type: boolean }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        deletedAt: { type: string, format: date-time, nullable: true }
+        schemaVersion: { type: integer }
+      required: [id, scope, name, code, version, active]
+
+    TaskTemplateRef:
+      type: object
+      required: [taskTemplateId, version, sortOrder]
+      properties:
+        taskTemplateScope: { $ref: '#/components/schemas/TemplateScope' }
+        taskTemplateId: { type: string }
+        version: { type: integer, minimum: 1 }
+        sortOrder: { type: integer }
+        estimatedHours: { type: number, format: float }
+
+    ForkRef:
+      type: object
+      required: [sourceTemplateId, sourceVersion, forkedAt]
+      properties:
+        sourceTemplateId: { type: string }
+        sourceVersion: { type: integer }
+        forkedAt: { type: string, format: date-time }
+        forkedBy: { type: string }
+
+    CreateProjectTemplateRequest:
+      type: object
+      required: [name, code]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        code: { type: string, minLength: 1, maxLength: 64 }
+        descriptionMarkdown: { type: string }
+        defaultMemberRoles:
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
+        taskTemplateRefs:
+          type: array
+          items: { $ref: '#/components/schemas/TaskTemplateRef' }
+        estimatedDurationDays: { type: integer, minimum: 0 }
+        tags:
+          type: array
+          items: { type: string }
+
+    UpdateProjectTemplateRequest:
+      type: object
+      description: 更新會建立新 version,既有 version 凍結
+      properties:
+        name: { type: string }
+        descriptionMarkdown: { type: string }
+        defaultMemberRoles:
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
+        taskTemplateRefs:
+          type: array
+          items: { $ref: '#/components/schemas/TaskTemplateRef' }
+        estimatedDurationDays: { type: integer }
+        tags:
+          type: array
+          items: { type: string }
+        active: { type: boolean }
+
+    ProjectTemplatePage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectTemplate' }
+        pageInfo: { $ref: '#/components/schemas/PageInfo' }
+
+    TaskTemplate:
+      type: object
+      properties:
+        id: { type: string }
+        scope: { $ref: '#/components/schemas/TemplateScope' }
+        rootOrgId:
+          type: string
+          nullable: true
+          description: GLOBAL scope 時為 null;ORG scope 時必填
+        name: { type: string }
+        code: { type: string }
+        type:
+          type: string
+          description: 對應 Task `type`(必須是已註冊的 type)
+        defaultPriority: { $ref: '#/components/schemas/Priority' }
+        defaultAttributes:
+          type: object
+          additionalProperties: true
+          description: 預填 Task attributes,實例化時 clone
+        descriptionMarkdownTemplate: { type: string }
+        defaultChecklist:
+          type: array
+          items: { $ref: '#/components/schemas/ChecklistItem' }
+        attachmentHints:
+          type: array
+          items: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        forkedFrom:
+          allOf:
+            - $ref: '#/components/schemas/ForkRef'
+          nullable: true
+        version: { type: integer, minimum: 1 }
+        active: { type: boolean }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        deletedAt: { type: string, format: date-time, nullable: true }
+        schemaVersion: { type: integer }
+      required: [id, scope, name, code, type, version, active]
+
+    ChecklistItem:
+      type: object
+      required: [id, label]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        required: { type: boolean, default: false }
+
+    CreateTaskTemplateRequest:
+      type: object
+      required: [name, code, type]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        code: { type: string, minLength: 1, maxLength: 64 }
+        type: { type: string }
+        defaultPriority: { $ref: '#/components/schemas/Priority' }
+        defaultAttributes:
+          type: object
+          additionalProperties: true
+        descriptionMarkdownTemplate: { type: string }
+        defaultChecklist:
+          type: array
+          items: { $ref: '#/components/schemas/ChecklistItem' }
+        attachmentHints:
+          type: array
+          items: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+
+    UpdateTaskTemplateRequest:
+      type: object
+      description: 更新會建立新 version,既有 version 凍結
+      properties:
+        name: { type: string }
+        defaultPriority: { $ref: '#/components/schemas/Priority' }
+        defaultAttributes:
+          type: object
+          additionalProperties: true
+        descriptionMarkdownTemplate: { type: string }
+        defaultChecklist:
+          type: array
+          items: { $ref: '#/components/schemas/ChecklistItem' }
+        attachmentHints:
+          type: array
+          items: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        active: { type: boolean }
+
+    TaskTemplatePage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/TaskTemplate' }
+        pageInfo: { $ref: '#/components/schemas/PageInfo' }
+
+    # ---------- Comment ----------
+    Comment:
+      type: object
+      properties:
+        id: { type: string }
+        taskId: { type: string }
+        authorId: { type: string }
+        bodyMarkdown: { type: string }
+        attachments:
+          type: array
+          items: { $ref: '#/components/schemas/AttachmentRef' }
+        createdAt: { type: string, format: date-time }
+        editedAt: { type: string, format: date-time, nullable: true }
+        deletedAt: { type: string, format: date-time, nullable: true }
+
+    CreateCommentRequest:
+      type: object
+      required: [bodyMarkdown]
+      properties:
+        bodyMarkdown: { type: string, minLength: 1 }
+        attachments:
+          type: array
+          items: { $ref: '#/components/schemas/AttachmentRef' }
+
+    # ---------- ActionRequest(v1.3:Single-hop direct dispatch)----------
+    ActionRequest:
+      type: object
+      properties:
+        id: { type: string }
+        rootOrgId: { type: string }
+        projectId:
+          type: string
+          nullable: true
+          description: 自課內提報時必填;跨層 dispatch 起初可空,leaf triage 時關聯 Project
+        originatingOrgId:
+          type: string
+          description: |
+            發起者所掛的 Organization 節點(actor 是該節點的 manager,且該節點是 targetOrg 的祖先;
+            自課內提報時 = targetOrgId)
+        targetOrgId:
+          type: string
+          description: |
+            **v1.3 改名**(取代 v1.2 `assignedToOrgId`)。**必為 leaf Organization**(`type ∈ root.settings.leafTypes`)。
+            一旦寫入後不再變動(無中途 relay 流程)。
+        title: { type: string, description: 允許 Unicode 多語系 }
+        descriptionMarkdown: { type: string }
+        severity:
+          type: object
+          properties:
+            level: { $ref: '#/components/schemas/SeverityLevel' }
+            reason: { type: string }
+        status: { $ref: '#/components/schemas/ActionRequestStatus' }
+        requesterId: { type: string }
+        ownerId:
+          type: string
+          nullable: true
+          description: |
+            預設規則(對應 ADR-0010):
+            - targetOrg.leaderIds == 0 → 409,不會建立
+            - == 1 → 自動 = leaderIds[0]
+            - >= 2 → 派工方在 dispatch payload 指定,必須 ∈ leaderIds
+        linkedTaskId: { type: string, nullable: true }
+        attachments:
+          type: array
+          items: { $ref: '#/components/schemas/AttachmentRef' }
+        submittedAt: { type: string, format: date-time }
+        resolvedAt: { type: string, format: date-time, nullable: true }
+        deletedAt: { type: string, format: date-time, nullable: true }
+      required: [id, rootOrgId, originatingOrgId, targetOrgId, title, severity, status, requesterId]
+
+    # v1.3 移除:RelayHop schema(隨 relayChain 一併刪除)
+
+    CreateActionRequestRequest:
+      type: object
+      required: [projectId, title, severity]
+      description: |
+        自課內提報用(actor 為該 leaf Org 內 user)。
+        - 跨層派工請改用 `POST /orgs/{targetOrgId}/dispatch-action-request`(v1.3 single-hop direct dispatch)
+        - 自課內提報時 server 自動設 originatingOrgId = targetOrgId = actor 所屬 leaf Org
+      properties:
+        projectId: { type: string }
+        title: { type: string, minLength: 1, maxLength: 200 }
+        descriptionMarkdown: { type: string }
+        severity:
+          type: object
+          required: [level]
+          properties:
+            level: { $ref: '#/components/schemas/SeverityLevel' }
+            reason: { type: string }
+        attachments:
+          type: array
+          items: { $ref: '#/components/schemas/AttachmentRef' }
+
+    DispatchActionRequestRequest:
+      type: object
+      required: [title, severity]
+      description: |
+        Manager 直派 ActionRequest 到子孫 leaf Org(`targetOrgId` 由 path `/orgs/{orgId}` 帶入,必為 leaf;v1.3)。
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        descriptionMarkdown: { type: string }
+        severity:
+          type: object
+          required: [level]
+          properties:
+            level: { $ref: '#/components/schemas/SeverityLevel' }
+            reason: { type: string }
+        attachments:
+          type: array
+          items: { $ref: '#/components/schemas/AttachmentRef' }
+        dueAt: { type: string, format: date-time, nullable: true }
+        ownerId:
+          type: string
+          nullable: true
+          description: |
+            **條件必填**:當 `targetOrg.leaderIds.length > 1` 時必填,且必須 ∈ targetOrg.leaderIds。
+            - leaderIds.length == 1:可省略,server 自動設 = leaderIds[0];若有提供則須等於該值,否則 422
+            - leaderIds.length == 0:整個請求 409 `target_org_no_leader`
+            - leaderIds.length >= 2:未提供 → 422 `owner_must_be_specified`;不在集合中 → 422 `owner_not_in_leaders`
+
+    UpdateActionRequestRequest:
+      type: object
+      properties:
+        title: { type: string }
+        descriptionMarkdown: { type: string }
+        severity:
+          type: object
+          properties:
+            level: { $ref: '#/components/schemas/SeverityLevel' }
+            reason: { type: string }
+        attachments:
+          type: array
+          items: { $ref: '#/components/schemas/AttachmentRef' }
+
+    ConvertActionRequestToTaskRequest:
+      type: object
+      required: [taskType, ownerId, assignees]
+      properties:
+        taskType: { type: string, example: INCIDENT_RESPONSE }
+        title: { type: string }
+        descriptionMarkdown: { type: string }
+        priority: { $ref: '#/components/schemas/Priority' }
+        ownerId: { type: string }
+        assignees:
+          type: array
+          minItems: 1
+          items: { type: string }
+        attributes:
+          type: object
+          additionalProperties: true
+        schedule: { $ref: '#/components/schemas/TimeRange' }
+
+    ActionRequestPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ActionRequest' }
+        pageInfo: { $ref: '#/components/schemas/PageInfo' }
+
+    # ---------- Attachment ----------
+    Attachment:
+      type: object
+      properties:
+        id: { type: string }
+        rootOrgId: { type: string }
+        mimeType: { type: string }
+        sizeBytes: { type: integer }
+        storageKey: { type: string, description: 內部儲存 key,前端不直接使用 }
+        downloadUrl: { type: string, format: uri, description: 短期 presigned URL }
+        uploaderId: { type: string }
+        ownerResourceType:
+          type: string
+          enum: [TASK, ACTION_REQUEST, COMMENT, PROJECT]
+        ownerResourceId: { type: string }
+        metadata:
+          type: object
+          properties:
+            width: { type: integer }
+            height: { type: integer }
+            durationMs: { type: integer }
+            checksum: { type: string }
+        status:
+          type: string
+          enum: [PENDING_UPLOAD, READY, FAILED, DELETED]
+        createdAt: { type: string, format: date-time }
+
+    CreateAttachmentRequest:
+      type: object
+      required: [mimeType, sizeBytes, ownerResourceType]
+      properties:
+        mimeType: { type: string }
+        sizeBytes: { type: integer, minimum: 1 }
+        filename: { type: string }
+        ownerResourceType:
+          type: string
+          enum: [TASK, ACTION_REQUEST, COMMENT, PROJECT]
+        ownerResourceId: { type: string, description: 若已知擁有者則填,否則之後再 attach }
+
+    AttachmentUploadTicket:
+      type: object
+      properties:
+        attachment: { $ref: '#/components/schemas/Attachment' }
+        uploadUrl: { type: string, format: uri, description: 直接 PUT 此 URL 上傳檔案 }
+        uploadHeaders:
+          type: object
+          additionalProperties: { type: string }
+        expiresAt: { type: string, format: date-time }
+
+    # ---------- Notification (預留) ----------
+    NotificationPreference:
+      type: object
+      properties:
+        userId: { type: string }
+        channels:
+          type: object
+          properties:
+            email: { type: boolean }
+            push: { type: boolean }
+            line: { type: boolean }
+        events:
+          type: array
+          items:
+            type: string
+            enum: [TASK_ASSIGNED, OWNER_TRANSFERRED, TASK_DUE_SOON, COMMENT_MENTION, ACTION_REQUEST_SUBMITTED]
+
+    Webhook:
+      type: object
+      properties:
+        id: { type: string }
+        rootOrgId: { type: string }
+        targetUrl: { type: string, format: uri }
+        events:
+          type: array
+          description: 訂閱的 event type 清單(例 `task.assigned`、`action-request.dispatched`,或 wildcard `task.*`、`>`)
+          items: { type: string }
+        secret: { type: string, description: 用於 HMAC-SHA256 簽章 }
+        active: { type: boolean }
+        createdAt: { type: string, format: date-time }
+
+    CreateWebhookRequest:
+      type: object
+      required: [targetUrl, events]
+      properties:
+        targetUrl: { type: string, format: uri }
+        events:
+          type: array
+          minItems: 1
+          items: { type: string }
+
+    # ---------- Domain Event Payload(NATS / Webhook 共用)----------
+    DomainEventPayload:
+      type: object
+      description: |
+        統一 domain event payload schema(NATS message body 與 Webhook POST body 共用)。
+        Webhook 額外帶 HTTP headers:`X-Factory-Ops-Signature`(HMAC-SHA256)、`X-Factory-Ops-Event-Id`、`X-Factory-Ops-Event-Type`、`X-Factory-Ops-Timestamp`。
+      required: [eventId, eventType, occurredAt, aggregateType, aggregateId]
+      properties:
+        eventId:
+          type: string
+          description: ULID,訂閱端用於去重
+        eventType:
+          type: string
+          description: 例 `task.assigned`、`action-request.dispatched`
+        occurredAt: { type: string, format: date-time }
+        rootOrgId: { type: string, nullable: true }
+        orgPath:
+          type: array
+          items: { type: string }
+          description: 從 root 到事件所屬 leaf 的 OrgId 鏈(若適用)
+        aggregateType:
+          type: string
+          enum: [Organization, User, Group, GroupMembership, Project, Task, ActionRequest, ProjectTemplate, TaskTemplate]
+        aggregateId: { type: string }
+        actorId: { type: string, nullable: true }
+        payload:
+          type: object
+          additionalProperties: true
+          description: event-specific payload

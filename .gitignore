@@ -1,0 +1,86 @@
+# --- Original installer artifacts (not part of project) ---
+files/
+files.zip
+
+# --- Kotlin / Gradle ---
+.gradle/
+build/
+!**/src/**/build/
+!**/test/**/build/
+!gradle/wrapper/gradle-wrapper.jar
+out/
+bin/
+*.class
+
+# --- Java / JVM ---
+*.jar
+*.war
+*.ear
+*.nar
+hs_err_pid*
+replay_pid*
+
+# --- IDE ---
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+*.code-workspace
+.fleet/
+.project
+.classpath
+.settings/
+
+# --- OS ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# --- Frontend (Node / React) ---
+node_modules/
+dist/
+.next/
+.nuxt/
+.cache/
+.parcel-cache/
+coverage/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Env / Secrets ---
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets/
+
+# --- Docker ---
+.docker/
+docker-compose.override.yml
+
+# --- MongoDB / MinIO data dirs (if developer mounts here) ---
+data/
+volumes/
+
+# --- Python (if any tooling) ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# --- Misc ---
+*.swp
+*.swo
+*~
+.tmp/
+tmp/

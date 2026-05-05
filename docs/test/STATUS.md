@@ -1,9 +1,60 @@
 # 測試工程 STATUS
 
-**里程碑**: 4 - 測試補強
+**里程碑**: 4 - 測試補強 (Phase 2: 覆蓋率提升)
 **agent**: test-engineer
-**完成日期**: 2026-05-05
+**完成日期**: 2026-05-06
 **狀態**: READY_FOR_REVIEW
+
+## Phase 2 更新 (2026-05-06): 覆蓋率從 28% 提升至 60%
+
+**目標達成**: LINE coverage 60% (2700/4449), BUILD SUCCESSFUL, 400 tests, 0 failures.
+
+### 新增測試檔案 (Phase 2)
+
+| 測試類別 | 位置 | 類型 |
+|---------|------|------|
+| `AuthDtoTest` | `unit/dto/AuthDtoTest.kt` | DTO 驗證 + 回應建構 |
+| `TaskDtoTest` | `unit/dto/TaskDtoTest.kt` | DTO 驗證 + toResponse() |
+| `ProjectDtoTest` | `unit/dto/ProjectDtoTest.kt` | DTO 驗證 + toResponse() |
+| `GroupDtoTest` | `unit/dto/GroupDtoTest.kt` | DTO 驗證 + toResponse() |
+| `OrganizationDtoTest` | `unit/dto/OrganizationDtoTest.kt` | DTO 驗證 + toResponse() |
+| `UserDtoTest` | `unit/dto/UserDtoTest.kt` | DTO 驗證 + toResponse() |
+| `ActionRequestDtoTest` | `unit/dto/ActionRequestDtoTest.kt` | DTO 驗證 + toResponse() |
+| `OrganizationMapperTest` | `unit/mapper/OrganizationMapperTest.kt` | Document↔Domain round-trip |
+| `ProjectMapperTest` | `unit/mapper/ProjectMapperTest.kt` | Document↔Domain round-trip |
+| `GroupMapperTest` | `unit/mapper/GroupMapperTest.kt` | Document↔Domain round-trip |
+| `UserMapperTest` | `unit/mapper/UserMapperTest.kt` | Document↔Domain round-trip |
+| `ActionRequestMapperTest` | `unit/mapper/ActionRequestMapperTest.kt` | Document↔Domain round-trip |
+| `TaskMapperTest` | `unit/mapper/TaskMapperTest.kt` | Document↔Domain round-trip |
+| `ProjectServiceUnitTest` | `unit/ProjectServiceUnitTest.kt` | Service 業務規則 |
+| `UserServiceUnitTest` | `unit/UserServiceUnitTest.kt` | Service 業務規則 |
+| `AuthServiceUnitTest` | `unit/AuthServiceUnitTest.kt` | AuthService 業務規則 |
+| `EventPublisherServiceUnitTest` | `unit/EventPublisherServiceUnitTest.kt` | Outbox 事件發布 |
+| `GroupServiceExtendedUnitTest` | `unit/GroupServiceExtendedUnitTest.kt` | GroupService 補充測試 |
+| `DispatchServiceExtendedUnitTest` | `unit/DispatchServiceExtendedUnitTest.kt` | DispatchService 補充測試 |
+| `ListMethodsUnitTest` | `unit/ListMethodsUnitTest.kt` | 分頁清單方法 |
+| `MockHrClientTest` | `unit/MockHrClientTest.kt` | HR 用戶端 |
+| `PasswordHasherTest` | `unit/PasswordHasherTest.kt` | BCrypt hash/verify |
+
+### Phase 2 覆蓋率快照
+
+| 指標 | 起始 (Phase 1) | 達成 (Phase 2) | 目標 |
+|------|--------------|----------------|------|
+| LINE | 28% (1246/4449) | **60% (2700/4449)** | ≥60% |
+| BRANCH | 19% | 45% | - |
+| METHOD | 17% | 38% | - |
+| CLASS | 33% | 70% | - |
+
+### 主要套件進步
+
+| 套件 | Phase 1 | Phase 2 |
+|------|---------|---------|
+| `interfaces/dto` | 0% | 86% |
+| `persistence/mapper` | 35% | 98% |
+| `application/service` | 40% | 79% |
+| `application/auth` | 14% | 15% |
+
+---
 
 > **給 code-reviewer 的快速指引**: 若 CI 環境有 Docker，移除以下檔案中的 `@Disabled` 即可啟用 18 個 MongoDB 整合測試：`OrganizationServiceTest.kt`（class 層）、`TaskServiceTest.kt`（class 層）、`DispatchServiceTest.kt`（class 層）、`AuthResourceTest.kt`（3 個 method）、`E2eSmokeTest.kt`（1 個 method）。同時將 `test/resources/application.properties` 的 `devservices.enabled=false` 改回 `true`，並移除 `seed.enabled=false` 改為 `true`。
 

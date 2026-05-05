@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Incident Response Task Attributes",
+  "type": "object",
+  "properties": {
+    "incidentType": {
+      "type": "string",
+      "description": "Type of incident"
+    },
+    "location": {
+      "type": "string",
+      "description": "Incident location"
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+    },
+    "description": {
+      "type": "string"
+    }
+  },
+  "required": ["incidentType"]
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Shift Handover Task Attributes",
+  "type": "object",
+  "properties": {
+    "outgoingShiftId": {
+      "type": "string"
+    },
+    "incomingShiftId": {
+      "type": "string"
+    },
+    "handoverNotes": {
+      "type": "string"
+    },
+    "pendingItems": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "required": ["outgoingShiftId", "incomingShiftId"]
+}

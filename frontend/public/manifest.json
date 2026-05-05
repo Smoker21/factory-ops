@@ -1,0 +1,17 @@
+{
+  "name": "工廠值班工作管理系統",
+  "short_name": "Factory Ops",
+  "description": "工廠值班團隊工作管理系統",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1971c2",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

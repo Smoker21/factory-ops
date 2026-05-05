@@ -11,7 +11,7 @@
 |---|---|---|---|
 | 1 | 規格 + 領域設計 | spec-architect | **COMPLETED (v1.3)** |
 | 2 | 資料模型 | mongodb-modeler | **READY_FOR_BACKEND (v1.0)** |
-| 3 | 後端 + 前端骨架 | quarkus-backend-builder → react-frontend-builder | 未開始 |
+| 3 | 後端 + 前端骨架 | quarkus-backend-builder → react-frontend-builder | **IN_PROGRESS（後端 PENDING_COMPILE_VERIFICATION；前端 MVP 完成）** |
 | 4 | 測試 + 審查 + 文件 + 部署 | test-engineer → code-reviewer → doc-devops | 未開始 |
 
 ---

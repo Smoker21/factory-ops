@@ -1,0 +1,70 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  margin: 0;
+  font-family: 'Noto Sans TC', 'Microsoft JhengHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Ensure minimum touch targets */
+button,
+[role="button"],
+a,
+input[type="submit"],
+input[type="button"] {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Improve scrollbar appearance */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 3px;
+}
+
+/* Markdown content styles */
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3 {
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.markdown-body p {
+  margin-bottom: 0.75rem;
+}
+
+.markdown-body code {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  font-size: 0.875em;
+}
+
+.markdown-body pre {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 1rem;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
+.markdown-body img {
+  max-width: 100%;
+}

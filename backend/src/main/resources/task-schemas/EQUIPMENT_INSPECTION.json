@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Equipment Inspection Task Attributes",
+  "type": "object",
+  "properties": {
+    "equipmentId": {
+      "type": "string",
+      "description": "Equipment identifier"
+    },
+    "checklist": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "required": { "type": "boolean" },
+          "checked": { "type": "boolean" }
+        },
+        "required": ["id", "label"]
+      }
+    }
+  },
+  "required": ["equipmentId"]
+}

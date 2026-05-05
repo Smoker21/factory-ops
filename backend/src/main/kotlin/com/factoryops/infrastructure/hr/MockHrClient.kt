@@ -1,6 +1,6 @@
 package com.factoryops.infrastructure.hr
 
-import io.quarkus.arc.lookup.LookupIfProperty
+import io.quarkus.arc.DefaultBean
 import jakarta.enterprise.context.ApplicationScoped
 import mu.KotlinLogging
 
@@ -16,7 +16,7 @@ private val logger = KotlinLogging.logger {}
  * ADR-0007 / ADR-0014: HR backend selection via runtime feature toggle.
  */
 @ApplicationScoped
-@LookupIfProperty(name = "hr.mode", stringValue = "mock", lookupIfMissing = true)
+@DefaultBean
 class MockHrClient : HrClient {
 
     private val employees = mapOf(

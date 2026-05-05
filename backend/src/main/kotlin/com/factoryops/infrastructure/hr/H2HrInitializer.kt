@@ -2,7 +2,7 @@ package com.factoryops.infrastructure.hr
 
 import io.agroal.api.AgroalDataSource
 import io.quarkus.agroal.DataSource
-import io.quarkus.arc.lookup.LookupIfProperty
+import io.quarkus.arc.properties.IfBuildProperty
 import io.quarkus.runtime.StartupEvent
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.enterprise.event.Observes
@@ -28,7 +28,7 @@ private val logger = KotlinLogging.logger {}
  * found, the table is left empty and a warning is logged.
  */
 @ApplicationScoped
-@LookupIfProperty(name = "hr.mode", stringValue = "h2")
+@IfBuildProperty(name = "hr.mode", stringValue = "h2")
 class H2HrInitializer @Inject constructor(
     @DataSource("hr") private val hrDataSource: AgroalDataSource,
     @ConfigProperty(name = "hr.h2.csv.path", defaultValue = "test_data/hr_employees.csv")

@@ -2,7 +2,7 @@ package com.factoryops.infrastructure.hr
 
 import io.agroal.api.AgroalDataSource
 import io.quarkus.agroal.DataSource
-import io.quarkus.arc.lookup.LookupIfProperty
+import io.quarkus.arc.properties.IfBuildProperty
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
 import mu.KotlinLogging
@@ -16,7 +16,7 @@ private val logger = KotlinLogging.logger {}
  * during application startup.
  */
 @ApplicationScoped
-@LookupIfProperty(name = "hr.mode", stringValue = "h2")
+@IfBuildProperty(name = "hr.mode", stringValue = "h2")
 class H2HrClient @Inject constructor(
     @DataSource("hr") private val hrDataSource: AgroalDataSource,
 ) : HrClient {

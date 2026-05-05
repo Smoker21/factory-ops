@@ -54,7 +54,8 @@ describe('utils: cn (class name builder)', () => {
   })
 
   it('should handle conditional classes', () => {
-    expect(cn('base', false && 'hidden', 'active')).toBe('base active')
+    const isHidden = false
+    expect(cn('base', isHidden && 'hidden', 'active')).toBe('base active')
   })
 
   it('should handle empty inputs', () => {

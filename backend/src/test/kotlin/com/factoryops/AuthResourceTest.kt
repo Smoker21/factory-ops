@@ -14,7 +14,7 @@ class AuthResourceTest {
     fun `login with valid seed credentials returns token pair`() {
         given()
             .contentType(ContentType.JSON)
-            .body("""{"accountName":"admin.system","password":"Admin@123456789"}""")
+            .body("""{"orgCode":"taichung-fab","accountName":"admin.system","password":"Admin@123456789"}""")
             .`when`().post("/v1/auth/login")
             .then()
             .statusCode(200)
@@ -27,7 +27,7 @@ class AuthResourceTest {
     fun `login with wrong password returns 401`() {
         given()
             .contentType(ContentType.JSON)
-            .body("""{"accountName":"admin.system","password":"wrongpassword"}""")
+            .body("""{"orgCode":"taichung-fab","accountName":"admin.system","password":"wrongpassword"}""")
             .`when`().post("/v1/auth/login")
             .then()
             .statusCode(401)
@@ -59,7 +59,7 @@ class AuthResourceTest {
     fun `login with non-existent user returns 401`() {
         given()
             .contentType(ContentType.JSON)
-            .body("""{"accountName":"unknown.user","password":"Password@123456"}""")
+            .body("""{"orgCode":"taichung-fab","accountName":"unknown.user","password":"Password@123456"}""")
             .`when`().post("/v1/auth/login")
             .then()
             .statusCode(401)

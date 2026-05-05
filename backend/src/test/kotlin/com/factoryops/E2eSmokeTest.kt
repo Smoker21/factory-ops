@@ -41,7 +41,7 @@ class E2eSmokeTest {
     fun `login with invalid credentials returns 401`() {
         given()
             .contentType(ContentType.JSON)
-            .body("""{"accountName":"nonexistent","password":"wrongpassword"}""")
+            .body("""{"orgCode":"taichung-fab","accountName":"nonexistent","password":"wrongpassword"}""")
             .`when`().post("/v1/auth/login")
             .then()
             .statusCode(401)

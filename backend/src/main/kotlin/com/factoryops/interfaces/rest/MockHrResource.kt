@@ -21,7 +21,7 @@ import org.eclipse.microprofile.openapi.annotations.tags.Tag
  * Delegates to whichever [HrClient] the runtime selected via `hr.mode`
  * (mock or h2), so the same URLs work regardless of which backend is active.
  */
-@IfBuildProfile("dev")
+@IfBuildProfile(anyOf = ["dev", "test"])
 @Path("/mock-hr")
 @Produces(MediaType.APPLICATION_JSON)
 @Tag(name = "MockHR")

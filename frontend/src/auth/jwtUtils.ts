@@ -5,7 +5,11 @@ export interface JwtPayload {
   displayName?: string
   rootOrgId: string
   orgPath?: string[]
-  roles: string[]
+  // Backend (`JwtIssuerService`) emits roles under the `groups` claim per
+  // MicroProfile JWT.  MSW mocks emit the same data under `roles`.  Consumers
+  // should accept either; see jwtGroupsToRoles() / AuthContext for handling.
+  groups?: string[]
+  roles?: string[]
   groupIds?: string[]
   orgManagerScopes?: string[]
   exp: number

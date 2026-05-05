@@ -31,12 +31,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (accessToken && refreshToken) {
       const payload = decodeJwt(accessToken)
       if (payload) {
+        const claim = payload.groups ?? payload.roles ?? []
+        const roles = claim.filter((r) => typeof r === 'string') as User['roles']
         const user: User = {
           id: payload.userId,
           rootOrgId: payload.rootOrgId,
           accountName: payload.accountName,
           displayName: payload.displayName ?? payload.accountName,
-          roles: payload.roles as User['roles'],
+          roles,
           groupIds: payload.groupIds ?? [],
           orgManagerScopes: payload.orgManagerScopes ?? [],
           active: true,
@@ -69,6 +71,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem(ACCESS_TOKEN_KEY, accessToken)
     localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
     const payload = decodeJwt(accessToken)
+    const claim = payload?.groups ?? payload?.roles
+    const refreshedRoles = (Array.isArray(claim)
+      ? claim.filter((r) => typeof r === 'string')
+      : null) as User['roles'] | null
     setState((prev) => ({
       ...prev,
       accessToken,
@@ -76,7 +82,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user: prev.user
         ? {
             ...prev.user,
-            roles: (payload?.roles as User['roles']) ?? prev.user.roles,
+            roles: refreshedRoles ?? prev.user.roles,
           }
         : prev.user,
     }))

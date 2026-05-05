@@ -7,7 +7,6 @@ files.zip
 build/
 !**/src/**/build/
 !**/test/**/build/
-!gradle/wrapper/gradle-wrapper.jar
 out/
 bin/
 *.class
@@ -17,6 +16,7 @@ bin/
 *.war
 *.ear
 *.nar
+!**/gradle/wrapper/gradle-wrapper.jar
 hs_err_pid*
 replay_pid*
 

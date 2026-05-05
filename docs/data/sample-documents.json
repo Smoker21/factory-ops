@@ -1,0 +1,511 @@
+{
+  "_comment": "Factory Ops 各 collection 範例文件。日期欄位以 ISO 8601 字串表示(實際儲存為 BSON Date UTC)。",
+
+  "organizations": [
+    {
+      "_id": "507f1f77bcf86cd799439011",
+      "rootOrgId": "507f1f77bcf86cd799439011",
+      "parentId": null,
+      "type": "FAB",
+      "name": "台中廠",
+      "code": "tch-fab",
+      "managerId": "507f1f77bcf86cd799439020",
+      "leaderIds": ["507f1f77bcf86cd799439021", "507f1f77bcf86cd799439022"],
+      "ancestorIds": [],
+      "isLeaf": false,
+      "depth": 0,
+      "timezone": "Asia/Taipei",
+      "locale": "zh-TW",
+      "settings": {
+        "orgMaxDepth": 5,
+        "leafTypes": ["SECTION"],
+        "attachmentMaxBytes": 52428800,
+        "extras": {}
+      },
+      "history": [
+        {
+          "actorId": "507f1f77bcf86cd799439020",
+          "action": "ORG_CREATED",
+          "at": "2026-01-01T00:00:00Z",
+          "payload": {}
+        }
+      ],
+      "schemaVersion": 1,
+      "createdAt": "2026-01-01T00:00:00Z",
+      "updatedAt": "2026-01-01T00:00:00Z",
+      "deletedAt": null
+    },
+    {
+      "_id": "507f1f77bcf86cd799439031",
+      "rootOrgId": "507f1f77bcf86cd799439011",
+      "parentId": "507f1f77bcf86cd799439028",
+      "type": "SECTION",
+      "name": "裝配課",
+      "code": "assembly-section",
+      "managerId": null,
+      "leaderIds": ["507f1f77bcf86cd799439040"],
+      "ancestorIds": [
+        "507f1f77bcf86cd799439011",
+        "507f1f77bcf86cd799439025",
+        "507f1f77bcf86cd799439028"
+      ],
+      "isLeaf": true,
+      "depth": 3,
+      "timezone": null,
+      "locale": null,
+      "settings": null,
+      "history": [],
+      "schemaVersion": 1,
+      "createdAt": "2026-01-02T00:00:00Z",
+      "updatedAt": "2026-01-02T00:00:00Z",
+      "deletedAt": null
+    }
+  ],
+
+  "users": [
+    {
+      "_id": "507f1f77bcf86cd799439040",
+      "rootOrgId": "507f1f77bcf86cd799439011",
+      "accountName": "alice.wang",
+      "employeeNo": "EMP-00123",
+      "email": "alice.wang@factory.example.com",
+      "displayName": "王小明",
+      "roles": ["OPERATOR", "SHIFT_LEAD"],
+      "orgManagerScopes": [],
+      "groupIds": ["507f1f77bcf86cd799439050"],
+      "primaryOrgPath": [
+        "507f1f77bcf86cd799439011",
+        "507f1f77bcf86cd799439025",
+        "507f1f77bcf86cd799439028",
+        "507f1f77bcf86cd799439031"
+      ],
+      "hrSyncedAt": "2026-05-01T02:00:00Z",
+      "active": true,
+      "schemaVersion": 1,
+      "createdAt": "2026-01-10T00:00:00Z",
+      "deletedAt": null
+    }
+  ],
+
+  "user_credentials": [
+    {
+      "_id": "507f1f77bcf86cd799439045",
+      "userId": "507f1f77bcf86cd799439040",
+      "rootOrgId": "507f1f77bcf86cd799439011",
+      "passwordHash": "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$REDACTED",
+      "algorithm": "ARGON2ID",
+      "updatedAt": "2026-01-10T00:00:00Z",
+      "schemaVersion": 1
+    }
+  ],
+
+  "groups": [
+    {
+      "_id": "507f1f77bcf86cd799439050",
+      "rootOrgId": "507f1f77bcf86cd799439011",
+      "organizationId": "507f1f77bcf86cd799439031",
+      "type": "SHIFT",
+      "name": "裝配課夜班",
+      "code": "assembly-night-shift",
+      "leaderId": "507f1f77bcf86cd799439040",
+      "attributes": {
+        "shiftCode": "NIGHT",
+        "startLocalTime": "22:00",
+        "endLocalTime": "06:00"
+      },
+      "settings": {
+        "qa": {
+          "dualSignRequired": true,
+          "requiredReviewerRoles": ["QA", "SHIFT_LEAD"]
+        },
+        "extras": {}
+      },
+      "history": [
+        {
+          "actorId": "507f1f77bcf86cd799439060",
+          "action": "GROUP_SETTINGS_QA_UPDATED",
+          "at": "2026-03-01T00:00:00Z",
+          "payload": {
+            "before": { "dualSignRequired": false, "requiredReviewerRoles": [] },
+            "after": { "dualSignRequired": true, "requiredReviewerRoles": ["QA", "SHIFT_LEAD"] }
+          }
+        }
+      ],
+      "schemaVersion": 1,
+      "createdAt": "2026-01-05T00:00:00Z",
+      "updatedAt": "2026-03-01T00:00:00Z",
+      "deletedAt": null
+    }
+  ],
+
+  "group_memberships": [
+    {
+      "_id": "507f1f77bcf86cd799439070",
+      "rootOrgId": "507f1f77bcf86cd799439011",
+      "groupId": "507f1f77bcf86cd799439050",
+      "userId": "507f1f77bcf86cd799439040",
+      "role": "LEAD",
+      "joinedAt": "2026-01-15T00:00:00Z",
+      "leftAt": null,
+      "createdBy": "507f1f77bcf86cd799439060",
+      "schemaVersion": 1
+    }
+  ],
+
+  "memberships": [
+    {
+      "_id": "507f1f77bcf86cd799439080",
+      "rootOrgId": "507f1f77bcf86cd799439011",
+      "projectId": "507f1f77bcf86cd799439090",
+      "userId": "507f1f77bcf86cd799439040",
+      "role": "LEAD",
+      "joinedAt": "2026-02-01T00:00:00Z",
+      "schemaVersion": 1
+    }
+  ],
+
+  "projects": [
+    {
+      "_id": "507f1f77bcf86cd799439090",
+      "rootOrgId": "507f1f77bcf86cd799439011",
+      "organizationId": "507f1f77bcf86cd799439031",
+      "name": "2026 Q2 設備維護專案",
+      "descriptionMarkdown": "# 目標\n本季度完成所有 A 級設備年度保養。",
+      "status": "ACTIVE",
+      "ownerId": "507f1f77bcf86cd799439040",
+      "memberIds": [
+        "507f1f77bcf86cd799439040",
+        "507f1f77bcf86cd799439041"
+      ],
+      "groupIds": [
+        "507f1f77bcf86cd799439050",
+        "507f1f77bcf86cd799439051"
+      ],
+      "schedule": {
+        "start": "2026-04-01T00:00:00Z",
+        "due": "2026-06-30T23:59:59Z"
+      },
+      "tags": ["maintenance", "q2"],
+      "templateRef": {
+        "templateType": "PROJECT_TEMPLATE",
+        "templateScope": "ORG",
+        "templateId": "507f1f77bcf86cd799439100",
+        "templateVersion": 3,
+        "instantiatedAt": "2026-04-01T00:00:00Z"
+      },
+      "history": [],
+      "schemaVersion": 1,
+      "createdAt": "2026-04-01T00:00:00Z",
+      "updatedAt": "2026-04-01T00:00:00Z",
+      "deletedAt": null
+    }
+  ],
+
+  "tasks": [
+    {
+      "_id": "507f1f77bcf86cd799439200",
+      "rootOrgId": "507f1f77bcf86cd799439011",
+      "projectId": "507f1f77bcf86cd799439090",
+      "type": "EQUIPMENT_INSPECTION",
+      "title": "CNC-M3 每週點檢",
+      "descriptionMarkdown": "## 點檢項目\n1. 油壓系統壓力\n2. 主軸冷卻液溫度\n\n![點檢前照片](attachment://507f1f77bcf86cd799439210)",
+      "status": "IN_REVIEW",
+      "priority": "HIGH",
+      "ownerId": "507f1f77bcf86cd799439040",
+      "assignees": [
+        "507f1f77bcf86cd799439040",
+        "507f1f77bcf86cd799439041"
+      ],
+      "attributes": {
+        "equipmentId": "CNC-M3",
+        "checklist": [
+          { "id": "chk-001", "label": "油壓系統", "required": true, "checked": true },
+          { "id": "chk-002", "label": "主軸冷卻", "required": true, "checked": false }
+        ]
+      },
+      "attachments": [
+        {
+          "attachmentId": "507f1f77bcf86cd799439210",
+          "alt": "點檢前照片",
+          "role": "INLINE"
+        }
+      ],
+      "schedule": {
+        "start": "2026-05-01T06:00:00Z",
+        "due": "2026-05-01T14:00:00Z"
+      },
+      "completedAt": null,
+      "originActionRequestId": null,
+      "templateRef": {
+        "templateType": "TASK_TEMPLATE",
+        "templateScope": "ORG",
+        "templateId": "507f1f77bcf86cd799439110",
+        "templateVersion": 2,
+        "instantiatedAt": "2026-05-01T06:00:00Z"
+      },
+      "qaReviewPolicy": {
+        "dualSignRequired": true,
+        "requiredReviewerRoles": ["QA", "SHIFT_LEAD"],
+        "snapshotAt": "2026-05-01T06:00:00Z",
+        "sourceGroupIds": ["507f1f77bcf86cd799439050"]
+      },
+      "qaReviews": [
+        {
+          "reviewerId": "507f1f77bcf86cd799439060",
+          "reviewerRole": "QA",
+          "decision": "APPROVED",
+          "reason": null,
+          "at": "2026-05-01T13:00:00Z"
+        }
+      ],
+      "comments": [
+        {
+          "id": "cmt-507f1f77bcf86cd799439220",
+          "authorId": "507f1f77bcf86cd799439040",
+          "bodyMarkdown": "油壓系統壓力正常,主軸溫度稍高需注意。",
+          "attachments": [],
+          "createdAt": "2026-05-01T10:00:00Z",
+          "editedAt": null,
+          "deletedAt": null
+        }
+      ],
+      "tags": ["equipment", "weekly"],
+      "history": [
+        {
+          "actorId": "507f1f77bcf86cd799439040",
+          "action": "TASK_CREATED",
+          "at": "2026-05-01T06:00:00Z",
+          "payload": {}
+        },
+        {
+          "actorId": "507f1f77bcf86cd799439040",
+          "action": "TASK_STATUS_CHANGED",
+          "at": "2026-05-01T09:00:00Z",
+          "payload": { "from": "OPEN", "to": "IN_PROGRESS" }
+        },
+        {
+          "actorId": "507f1f77bcf86cd799439040",
+          "action": "TASK_STATUS_CHANGED",
+          "at": "2026-05-01T12:30:00Z",
+          "payload": { "from": "IN_PROGRESS", "to": "IN_REVIEW" }
+        }
+      ],
+      "schemaVersion": 1,
+      "createdAt": "2026-05-01T06:00:00Z",
+      "createdBy": "507f1f77bcf86cd799439040",
+      "updatedAt": "2026-05-01T13:00:00Z",
+      "deletedAt": null
+    }
+  ],
+
+  "action_requests": [
+    {
+      "_id": "507f1f77bcf86cd799439300",
+      "rootOrgId": "507f1f77bcf86cd799439011",
+      "projectId": null,
+      "originatingOrgId": "507f1f77bcf86cd799439011",
+      "targetOrgId": "507f1f77bcf86cd799439031",
+      "title": "新設機台安裝需支援",
+      "descriptionMarkdown": "SMT-L5 新機台需裝配課協助安裝調試,影響本週產線排程。",
+      "severity": {
+        "level": "HIGH",
+        "reason": "影響產線排程"
+      },
+      "status": "SUBMITTED",
+      "requesterId": "507f1f77bcf86cd799439020",
+      "ownerId": "507f1f77bcf86cd799439040",
+      "linkedTaskId": null,
+      "attachments": [],
+      "history": [
+        {
+          "actorId": "507f1f77bcf86cd799439020",
+          "action": "ACTION_REQUEST_DISPATCHED",
+          "at": "2026-05-03T08:00:00Z",
+          "payload": {
+            "originatingOrgId": "507f1f77bcf86cd799439011",
+            "targetOrgId": "507f1f77bcf86cd799439031"
+          }
+        }
+      ],
+      "submittedAt": "2026-05-03T08:00:00Z",
+      "resolvedAt": null,
+      "schemaVersion": 1,
+      "createdAt": "2026-05-03T08:00:00Z",
+      "updatedAt": "2026-05-03T08:00:00Z",
+      "deletedAt": null
+    }
+  ],
+
+  "project_templates": [
+    {
+      "_id": "507f1f77bcf86cd799439100",
+      "scope": "ORG",
+      "rootOrgId": "507f1f77bcf86cd799439011",
+      "name": "設備保養專案範本",
+      "code": "equipment-maintenance",
+      "descriptionMarkdown": "標準設備保養專案流程。",
+      "defaultMemberRoles": { "ENGINEER": 1, "OPERATOR": 2 },
+      "taskTemplateRefs": [
+        {
+          "taskTemplateScope": "GLOBAL",
+          "taskTemplateId": "507f1f77bcf86cd799439120",
+          "version": 1,
+          "sortOrder": 1,
+          "estimatedHours": 2.0
+        }
+      ],
+      "estimatedDurationDays": 7,
+      "tags": ["equipment", "maintenance"],
+      "forkedFrom": null,
+      "version": 3,
+      "active": true,
+      "createdBy": "507f1f77bcf86cd799439060",
+      "history": [],
+      "schemaVersion": 1,
+      "createdAt": "2026-03-01T00:00:00Z",
+      "updatedAt": "2026-03-01T00:00:00Z",
+      "deletedAt": null
+    }
+  ],
+
+  "task_templates": [
+    {
+      "_id": "507f1f77bcf86cd799439120",
+      "scope": "GLOBAL",
+      "rootOrgId": null,
+      "name": "設備點檢 Task 範本",
+      "code": "equipment-inspection-tpl",
+      "type": "EQUIPMENT_INSPECTION",
+      "defaultPriority": "NORMAL",
+      "defaultAttributes": {
+        "checklist": [
+          { "id": "chk-001", "label": "外觀檢查", "required": true },
+          { "id": "chk-002", "label": "油位確認", "required": true }
+        ]
+      },
+      "descriptionMarkdownTemplate": "## 點檢報告\n**設備**: {{equipmentId}}\n\n",
+      "defaultChecklist": [
+        { "id": "chk-001", "label": "外觀檢查", "required": true },
+        { "id": "chk-002", "label": "油位確認", "required": true }
+      ],
+      "attachmentHints": ["點檢前照片", "異常部位特寫"],
+      "tags": ["equipment", "inspection"],
+      "forkedFrom": null,
+      "version": 1,
+      "active": true,
+      "createdBy": "507f1f77bcf86cd799439060",
+      "history": [],
+      "schemaVersion": 1,
+      "createdAt": "2026-01-01T00:00:00Z",
+      "updatedAt": "2026-01-01T00:00:00Z",
+      "deletedAt": null
+    }
+  ],
+
+  "attachments": [
+    {
+      "_id": "507f1f77bcf86cd799439210",
+      "rootOrgId": "507f1f77bcf86cd799439011",
+      "mimeType": "image/jpeg",
+      "sizeBytes": 2457600,
+      "storageKey": "org/507f1f77bcf86cd799439011/tasks/507f1f77bcf86cd799439200/photo-before.jpg",
+      "uploaderId": "507f1f77bcf86cd799439040",
+      "ownerResourceType": "TASK",
+      "ownerResourceId": "507f1f77bcf86cd799439200",
+      "status": "READY",
+      "metadata": {
+        "width": 1920,
+        "height": 1080,
+        "durationMs": null,
+        "checksum": "sha256:abc123def456..."
+      },
+      "schemaVersion": 1,
+      "createdAt": "2026-05-01T06:05:00Z",
+      "deletedAt": null
+    }
+  ],
+
+  "webhooks": [
+    {
+      "_id": "507f1f77bcf86cd799439400",
+      "rootOrgId": "507f1f77bcf86cd799439011",
+      "targetUrl": "https://notify.example.com/webhook",
+      "events": ["task.assigned", "action-request.dispatched"],
+      "secret": "REDACTED_HMAC_SECRET",
+      "active": true,
+      "schemaVersion": 1,
+      "createdAt": "2026-02-01T00:00:00Z",
+      "updatedAt": "2026-02-01T00:00:00Z",
+      "deletedAt": null
+    }
+  ],
+
+  "webhook_dead_letters": [
+    {
+      "_id": "507f1f77bcf86cd799439410",
+      "rootOrgId": "507f1f77bcf86cd799439011",
+      "webhookId": "507f1f77bcf86cd799439400",
+      "eventId": "01HW3K9XMQP000000000000000",
+      "eventType": "task.assigned",
+      "payload": {
+        "eventId": "01HW3K9XMQP000000000000000",
+        "eventType": "task.assigned",
+        "occurredAt": "2026-05-03T08:30:00+08:00",
+        "aggregateType": "Task",
+        "aggregateId": "507f1f77bcf86cd799439200"
+      },
+      "targetUrl": "https://notify.example.com/webhook",
+      "attemptCount": 5,
+      "lastAttemptAt": "2026-05-03T12:00:00Z",
+      "lastError": "Connection timeout after 5000ms",
+      "resolvedAt": null,
+      "schemaVersion": 1,
+      "createdAt": "2026-05-03T10:00:00Z"
+    }
+  ],
+
+  "domain_event_outbox": [
+    {
+      "_id": "507f1f77bcf86cd799439500",
+      "rootOrgId": "507f1f77bcf86cd799439011",
+      "eventId": "01HW3K9XMQP000000000000001",
+      "eventType": "factory-ops.task.assigned",
+      "aggregateType": "Task",
+      "aggregateId": "507f1f77bcf86cd799439200",
+      "payload": {
+        "eventId": "01HW3K9XMQP000000000000001",
+        "eventType": "task.assigned",
+        "occurredAt": "2026-05-03T08:30:00+08:00",
+        "rootOrgId": "507f1f77bcf86cd799439011",
+        "aggregateType": "Task",
+        "aggregateId": "507f1f77bcf86cd799439200",
+        "actorId": "507f1f77bcf86cd799439060",
+        "payload": { "assignees": ["507f1f77bcf86cd799439040"] }
+      },
+      "processedAt": null,
+      "retryCount": 0,
+      "scheduledAt": "2026-05-03T08:30:00Z",
+      "schemaVersion": 1,
+      "createdAt": "2026-05-03T08:30:00Z"
+    }
+  ],
+
+  "audit_logs": [
+    {
+      "_id": "507f1f77bcf86cd799439600",
+      "rootOrgId": "507f1f77bcf86cd799439011",
+      "actorId": "507f1f77bcf86cd799439060",
+      "action": "USER_ROLE_CHANGED",
+      "resourceType": "User",
+      "resourceId": "507f1f77bcf86cd799439040",
+      "payload": {
+        "before": ["OPERATOR"],
+        "after": ["OPERATOR", "SHIFT_LEAD"]
+      },
+      "ipAddress": "10.0.0.1",
+      "userAgent": "Factory-Ops-Web/1.0",
+      "schemaVersion": 1,
+      "createdAt": "2026-05-03T08:00:00Z"
+    }
+  ]
+}

@@ -69,6 +69,7 @@ export interface TimeRange {
 }
 
 export interface LoginRequest {
+  orgCode: string
   accountName: string
   password: string
 }

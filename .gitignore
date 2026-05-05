@@ -89,3 +89,4 @@ tmp/
 
 # --- Claude Code per-user settings (do not commit) ---
 .claude/settings.local.json
+.claude/scheduled_tasks.lock

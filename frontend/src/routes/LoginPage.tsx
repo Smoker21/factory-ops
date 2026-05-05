@@ -22,11 +22,14 @@ import { decodeJwt } from '@/auth/jwtUtils'
 import type { User } from '@/api/types'
 
 const schema = z.object({
+  orgCode: z.string().min(1, '組織代號必填').max(60),
   accountName: z.string().min(1, '帳號必填').max(30),
   password: z.string().min(1, '密碼必填'),
 })
 
 type LoginFormData = z.infer<typeof schema>
+
+const DEFAULT_ORG_CODE = (import.meta.env.VITE_DEFAULT_ORG_CODE as string | undefined) ?? ''
 
 export function LoginPage() {
   const { t } = useTranslation()
@@ -40,7 +43,10 @@ export function LoginPage() {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<LoginFormData>({ resolver: zodResolver(schema) })
+  } = useForm<LoginFormData>({
+    resolver: zodResolver(schema),
+    defaultValues: { orgCode: DEFAULT_ORG_CODE, accountName: '', password: '' },
+  })
 
   const onSubmit = async (data: LoginFormData) => {
     setError(null)
@@ -99,6 +105,19 @@ export function LoginPage() {
 
           <form onSubmit={handleSubmit(onSubmit)} noValidate>
             <Stack gap="md">
+              <TextInput
+                label={t('auth.orgCode')}
+                placeholder="taichung-fab"
+                required
+                autoCapitalize="off"
+                autoCorrect="off"
+                autoComplete="organization"
+                error={errors.orgCode?.message}
+                size="md"
+                styles={{ input: { minHeight: 44 } }}
+                {...register('orgCode')}
+              />
+
               <TextInput
                 label={t('auth.accountName')}
                 placeholder="accountName"

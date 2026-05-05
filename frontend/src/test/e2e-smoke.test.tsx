@@ -90,12 +90,12 @@ describe('API Integration Smoke Tests', () => {
   let tokens: TokenPair
 
   beforeEach(async () => {
-    tokens = await login({ accountName: 'leader.chen', password: 'Leader@123456789' })
+    tokens = await login({ orgCode: 'taichung-fab', accountName: 'leader.chen', password: 'Leader@123456789' })
     localStorage.setItem(ACCESS_TOKEN_KEY, tokens.accessToken)
   })
 
   it('can call login API with valid credentials', async () => {
-    const result = await login({ accountName: 'leader.chen', password: 'Leader@123456789' })
+    const result = await login({ orgCode: 'taichung-fab', accountName: 'leader.chen', password: 'Leader@123456789' })
     expect(result.accessToken).toBeTruthy()
     expect(result.refreshToken).toBeTruthy()
     expect(result.tokenType).toBe('Bearer')

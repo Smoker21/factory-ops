@@ -27,6 +27,7 @@
   "auth": {
     "login": "登入",
     "logout": "登出",
+    "orgCode": "組織代號",
     "accountName": "帳號名稱",
     "password": "密碼",
     "loginTitle": "工廠值班工作管理系統",

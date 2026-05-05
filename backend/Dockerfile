@@ -15,7 +15,7 @@ RUN gradle dependencies --no-daemon --quiet 2>/dev/null || true
 
 # Copy full source and build (skip tests — run separately in CI)
 COPY . .
-RUN ./gradlew build -x test -Dquarkus.package.type=jar --no-daemon
+RUN ./gradlew build -x test --no-daemon
 
 # Stage 2: Runtime
 FROM eclipse-temurin:21-jre AS runtime

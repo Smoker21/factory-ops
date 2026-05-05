@@ -9,6 +9,7 @@ import com.factoryops.interfaces.dto.UserResponse
 import com.factoryops.interfaces.dto.PageInfo
 import com.factoryops.interfaces.dto.toResponse
 import com.factoryops.interfaces.filter.RequestContext
+import jakarta.annotation.security.RolesAllowed
 import jakarta.inject.Inject
 import jakarta.validation.Valid
 import jakarta.ws.rs.Consumes
@@ -40,19 +41,24 @@ class UserResource {
     lateinit var requestContext: RequestContext
 
     @GET
-    @Operation(summary = "List users in root org")
+    @Operation(summary = "List users in root org with optional cursor-based pagination")
+    @APIResponse(responseCode = "200", description = "User page")
     fun list(
         @QueryParam("q") q: String?,
-        @QueryParam("active") active: Boolean?
+        @QueryParam("active") active: Boolean?,
+        @QueryParam("cursor") cursor: String?,
+        @QueryParam("limit") @DefaultValue("20") limit: Int
     ): Response {
         val rootOrgId = requestContext.requireRootOrgId()
-        val users = userService.listUsers(rootOrgId, q, active)
-        return Response.ok(UserPageResponse(users.map { it.toResponse() }, PageInfo(null, false))).build()
+        val (users, pageInfo) = userService.listUsers(rootOrgId, q, active, cursor, limit)
+        return Response.ok(UserPageResponse(users.map { it.toResponse() }, pageInfo)).build()
     }
 
     @POST
+    @RolesAllowed("ORG_ADMIN", "ADMIN")
     @Operation(summary = "Create user from HR")
     @APIResponse(responseCode = "201", description = "User created")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     @APIResponse(responseCode = "409", description = "Conflict")
     @APIResponse(responseCode = "422", description = "Validation error")
     fun create(@Valid request: CreateUserRequest): Response {
@@ -76,17 +82,25 @@ class UserResource {
 
     @PATCH
     @Path("/{userId}")
+    @RolesAllowed("ORG_ADMIN", "ADMIN")
     @Operation(summary = "Update user")
+    @APIResponse(responseCode = "200", description = "Updated")
+    @APIResponse(responseCode = "403", description = "Forbidden")
+    @APIResponse(responseCode = "422", description = "Cannot modify own roles")
     fun update(@PathParam("userId") userId: String, @Valid request: UpdateUserRequest): Response {
+        val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
         val roles = request.roles?.mapNotNull { runCatching { Role.valueOf(it) }.getOrNull() }
-        val user = userService.updateUser(userId, rootOrgId, roles, request.active)
+        val user = userService.updateUser(userId, rootOrgId, roles, request.active, actorId)
         return Response.ok(user.toResponse()).build()
     }
 
     @DELETE
     @Path("/{userId}")
+    @RolesAllowed("ORG_ADMIN", "ADMIN")
     @Operation(summary = "Soft-delete user")
+    @APIResponse(responseCode = "204", description = "Deleted")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun delete(@PathParam("userId") userId: String): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -96,7 +110,10 @@ class UserResource {
 
     @POST
     @Path("/{userId}/sync-from-hr")
+    @RolesAllowed("ORG_ADMIN", "ADMIN")
     @Operation(summary = "Sync user from HR")
+    @APIResponse(responseCode = "200", description = "Synced")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun syncFromHr(@PathParam("userId") userId: String): Response {
         val rootOrgId = requestContext.requireRootOrgId()
         val user = userService.syncFromHr(userId, rootOrgId)

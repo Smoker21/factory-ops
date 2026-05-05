@@ -14,6 +14,7 @@ import com.factoryops.interfaces.dto.toDomain
 import com.factoryops.interfaces.dto.toOrganizationLeaderResponse
 import com.factoryops.interfaces.dto.toResponse
 import com.factoryops.interfaces.filter.RequestContext
+import jakarta.annotation.security.RolesAllowed
 import jakarta.inject.Inject
 import jakarta.validation.Valid
 import jakarta.ws.rs.Consumes
@@ -45,21 +46,23 @@ class OrganizationResource {
     lateinit var requestContext: RequestContext
 
     @GET
-    @Operation(summary = "List organizations")
+    @Operation(summary = "List organizations with optional cursor-based pagination")
     @APIResponse(responseCode = "200", description = "Organization list")
     fun list(
         @QueryParam("parentId") parentId: String?,
         @QueryParam("type") type: String?,
         @QueryParam("leafOnly") @DefaultValue("false") leafOnly: Boolean,
-        @QueryParam("underOrgId") underOrgId: String?
+        @QueryParam("underOrgId") underOrgId: String?,
+        @QueryParam("cursor") cursor: String?,
+        @QueryParam("limit") @DefaultValue("50") limit: Int
     ): Response {
         val rootOrgId = requestContext.requireRootOrgId()
-        val orgs = orgService.listOrgs(rootOrgId, parentId, type, leafOnly, underOrgId)
-        val items = orgs.map { it.toResponse() }
-        return Response.ok(OrganizationPageResponse(items, PageInfo(null, false))).build()
+        val (orgs, pageInfo) = orgService.listOrgs(rootOrgId, parentId, type, leafOnly, underOrgId, cursor, limit)
+        return Response.ok(OrganizationPageResponse(orgs.map { it.toResponse() }, pageInfo)).build()
     }
 
     @POST
+    @RolesAllowed("ORG_ADMIN", "ADMIN")
     @Operation(summary = "Create organization node")
     @APIResponse(responseCode = "201", description = "Created")
     @APIResponse(responseCode = "403", description = "Forbidden")
@@ -97,8 +100,10 @@ class OrganizationResource {
 
     @PATCH
     @Path("/{orgId}")
+    @RolesAllowed("ORG_ADMIN", "ADMIN")
     @Operation(summary = "Update organization")
     @APIResponse(responseCode = "200", description = "Updated")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun update(@PathParam("orgId") orgId: String, @Valid request: UpdateOrganizationRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -108,8 +113,10 @@ class OrganizationResource {
 
     @DELETE
     @Path("/{orgId}")
+    @RolesAllowed("ORG_ADMIN", "ADMIN")
     @Operation(summary = "Soft-delete organization")
     @APIResponse(responseCode = "204", description = "Deleted")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun delete(@PathParam("orgId") orgId: String): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -119,8 +126,10 @@ class OrganizationResource {
 
     @POST
     @Path("/{orgId}/transfer-manager")
+    @RolesAllowed("ORG_ADMIN", "ADMIN")
     @Operation(summary = "Transfer organization manager")
     @APIResponse(responseCode = "200", description = "Manager updated")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun transferManager(@PathParam("orgId") orgId: String, @Valid request: TransferManagerRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -140,8 +149,10 @@ class OrganizationResource {
 
     @POST
     @Path("/{orgId}/leaders")
+    @RolesAllowed("ORG_ADMIN", "ADMIN")
     @Operation(summary = "Add organization leader")
     @APIResponse(responseCode = "201", description = "Leader added")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun addLeader(@PathParam("orgId") orgId: String, @Valid request: AddLeaderRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -151,8 +162,10 @@ class OrganizationResource {
 
     @DELETE
     @Path("/{orgId}/leaders/{userId}")
+    @RolesAllowed("ORG_ADMIN", "ADMIN")
     @Operation(summary = "Remove organization leader")
     @APIResponse(responseCode = "204", description = "Leader removed")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun removeLeader(@PathParam("orgId") orgId: String, @PathParam("userId") userId: String): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()

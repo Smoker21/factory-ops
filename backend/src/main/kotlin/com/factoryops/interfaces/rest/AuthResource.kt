@@ -42,7 +42,7 @@ class AuthResource {
     @APIResponse(responseCode = "401", description = "Invalid credentials")
     @APIResponse(responseCode = "422", description = "Validation error")
     fun login(@Valid request: LoginRequest): Response {
-        val tokenPair = authService.login(request.accountName, request.password)
+        val tokenPair = authService.login(request.orgCode, request.accountName, request.password)
         return Response.ok(TokenPairResponse(
             accessToken = tokenPair.accessToken,
             refreshToken = tokenPair.refreshToken,

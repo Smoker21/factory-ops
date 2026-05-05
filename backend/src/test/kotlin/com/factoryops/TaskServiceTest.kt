@@ -26,6 +26,11 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import java.time.Instant
 
+/**
+ * Integration tests for TaskService via @QuarkusTest + MongoDB DevServices.
+ * Requires Docker (Testcontainers) for MongoDB replica set.
+ * Business logic is also covered by unit/TaskServiceUnitTest.kt (no Docker).
+ */
 @QuarkusTest
 class TaskServiceTest {
 
@@ -99,7 +104,7 @@ class TaskServiceTest {
         }
         projectRepository.persist(project)
 
-        return Triple(rootId, project.id, userId)
+        return Triple(rootId, project.id!!, userId)
     }
 
     @Test

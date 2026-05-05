@@ -15,6 +15,11 @@ import org.junit.jupiter.api.Test
 import org.bson.types.ObjectId
 import java.time.Instant
 
+/**
+ * Integration tests for OrganizationService via @QuarkusTest + MongoDB DevServices.
+ * Requires Docker (Testcontainers) for MongoDB replica set.
+ * Business logic is also covered by unit/OrganizationServiceUnitTest.kt (no Docker).
+ */
 @QuarkusTest
 class OrganizationServiceTest {
 

@@ -703,6 +703,27 @@ try {
   print("domain_event_outbox index error: " + e.message);
 }
 
+// ===================== revoked_tokens =====================
+// 對應 P0-12: refresh token blacklist
+
+try {
+  // IDX-RT-01: jti 唯一(防重複插入)
+  db.revoked_tokens.createIndex(
+    { jti: 1 },
+    { unique: true, name: "idx_revoked_token_jti_unique", background: true }
+  );
+
+  // IDX-RT-02: TTL — expiresAt 後自動清除(refresh token 過期後無需保留)
+  db.revoked_tokens.createIndex(
+    { expiresAt: 1 },
+    { expireAfterSeconds: 0, name: "idx_revoked_token_ttl", background: true }
+  );
+
+  print("revoked_tokens indexes OK");
+} catch (e) {
+  print("revoked_tokens index error: " + e.message);
+}
+
 // ===================== audit_logs =====================
 // 對應 docs/data/indexes.md §16
 

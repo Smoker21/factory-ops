@@ -6,6 +6,8 @@ import io.quarkus.mongodb.panache.kotlin.PanacheMongoRepository
 import jakarta.enterprise.context.ApplicationScoped
 import org.bson.Document
 import org.bson.types.ObjectId
+import com.mongodb.client.model.Filters
+import com.mongodb.client.model.Sorts
 
 @ApplicationScoped
 class ProjectRepository : PanacheMongoRepository<ProjectDocument> {
@@ -30,6 +32,18 @@ class ProjectRepository : PanacheMongoRepository<ProjectDocument> {
 
     fun findByMemberId(rootOrgId: ObjectId, memberId: ObjectId): List<ProjectDocument> =
         find(Document("rootOrgId", rootOrgId).append("memberIds", memberId).append("deletedAt", null)).list()
+
+    /**
+     * Cursor-based pagination: returns up to [limit] documents with _id > [cursor] (if provided).
+     * Caller should request limit+1 to detect hasMore.
+     */
+    fun findWithCursor(rootOrgId: ObjectId, cursor: ObjectId?, limit: Int): List<ProjectDocument> {
+        val baseFilter = Document("rootOrgId", rootOrgId).append("deletedAt", null)
+        val filter = if (cursor != null) {
+            Document("\$and", listOf(baseFilter, Document("_id", Document("\$gt", cursor))))
+        } else baseFilter
+        return find(filter).page(0, limit).list()
+    }
 }
 
 @ApplicationScoped

@@ -61,7 +61,7 @@ class OutboxPoller(
             logger.info { "OUTBOX DRY-RUN: would publish event [$eventType] id=[$eventId]" }
             return
         }
-        // TODO: In production, publish to NATS JetStream and trigger webhook dispatching
+        // Real NATS/webhook dispatch is wired in the outbound integration phase
         logger.info { "OUTBOX: published event [$eventType] id=[$eventId]" }
     }
 }

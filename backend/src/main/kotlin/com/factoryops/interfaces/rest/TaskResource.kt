@@ -21,10 +21,12 @@ import com.factoryops.interfaces.dto.UpdateTaskRequest
 import com.factoryops.interfaces.dto.toResponse
 import com.factoryops.interfaces.exception.ValidationException
 import com.factoryops.interfaces.filter.RequestContext
+import jakarta.annotation.security.RolesAllowed
 import jakarta.inject.Inject
 import jakarta.validation.Valid
 import jakarta.ws.rs.Consumes
 import jakarta.ws.rs.DELETE
+import jakarta.ws.rs.DefaultValue
 import jakarta.ws.rs.GET
 import jakarta.ws.rs.PATCH
 import jakarta.ws.rs.POST
@@ -52,22 +54,27 @@ class TaskResource {
     lateinit var requestContext: RequestContext
 
     @GET
-    @Operation(summary = "List tasks")
+    @Operation(summary = "List tasks with optional cursor-based pagination")
+    @APIResponse(responseCode = "200", description = "Task page")
     fun list(
         @QueryParam("projectId") projectId: String?,
         @QueryParam("status") status: String?,
         @QueryParam("ownerId") ownerId: String?,
         @QueryParam("assigneeId") assigneeId: String?,
-        @QueryParam("type") type: String?
+        @QueryParam("type") type: String?,
+        @QueryParam("cursor") cursor: String?,
+        @QueryParam("limit") @DefaultValue("20") limit: Int
     ): Response {
         val rootOrgId = requestContext.requireRootOrgId()
-        val tasks = taskService.listTasks(rootOrgId, projectId, status, ownerId, assigneeId, type)
-        return Response.ok(TaskPageResponse(tasks.map { it.toResponse() }, PageInfo(null, false))).build()
+        val (tasks, pageInfo) = taskService.listTasks(rootOrgId, projectId, status, ownerId, assigneeId, type, cursor, limit)
+        return Response.ok(TaskPageResponse(tasks.map { it.toResponse() }, pageInfo)).build()
     }
 
     @POST
+    @RolesAllowed("OPERATOR", "SHIFT_LEAD", "ENGINEER", "QA", "GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Create task")
     @APIResponse(responseCode = "201", description = "Task created")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun create(@Valid request: CreateTaskRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -100,7 +107,10 @@ class TaskResource {
 
     @PATCH
     @Path("/{taskId}")
+    @RolesAllowed("OPERATOR", "SHIFT_LEAD", "ENGINEER", "QA", "GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Update task")
+    @APIResponse(responseCode = "200", description = "Updated")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun update(@PathParam("taskId") taskId: String, @Valid request: UpdateTaskRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -111,7 +121,10 @@ class TaskResource {
 
     @DELETE
     @Path("/{taskId}")
+    @RolesAllowed("SHIFT_LEAD", "GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Soft-delete task")
+    @APIResponse(responseCode = "204", description = "Deleted")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun delete(@PathParam("taskId") taskId: String): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -121,7 +134,10 @@ class TaskResource {
 
     @POST
     @Path("/{taskId}/status")
+    @RolesAllowed("OPERATOR", "SHIFT_LEAD", "ENGINEER", "QA", "GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Change task status")
+    @APIResponse(responseCode = "200", description = "Status changed")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun changeStatus(@PathParam("taskId") taskId: String, @Valid request: ChangeTaskStatusRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -134,7 +150,10 @@ class TaskResource {
 
     @POST
     @Path("/{taskId}/assignees")
+    @RolesAllowed("SHIFT_LEAD", "GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Add assignees to task")
+    @APIResponse(responseCode = "200", description = "Assignees added")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun addAssignees(@PathParam("taskId") taskId: String, @Valid request: AddAssigneesRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -144,7 +163,10 @@ class TaskResource {
 
     @DELETE
     @Path("/{taskId}/assignees/{userId}")
+    @RolesAllowed("SHIFT_LEAD", "GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Remove assignee from task")
+    @APIResponse(responseCode = "200", description = "Assignee removed")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun removeAssignee(@PathParam("taskId") taskId: String, @PathParam("userId") userId: String): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -154,7 +176,10 @@ class TaskResource {
 
     @POST
     @Path("/{taskId}/owner")
+    @RolesAllowed("SHIFT_LEAD", "GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Transfer task owner")
+    @APIResponse(responseCode = "200", description = "Owner transferred")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun transferOwner(@PathParam("taskId") taskId: String, @Valid request: TransferTaskOwnerRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -164,7 +189,12 @@ class TaskResource {
 
     @POST
     @Path("/{taskId}/review")
+    @RolesAllowed("OPERATOR", "SHIFT_LEAD", "ENGINEER", "QA", "GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Submit QA review for task")
+    @APIResponse(responseCode = "200", description = "Review submitted")
+    @APIResponse(responseCode = "403", description = "Forbidden")
+    @APIResponse(responseCode = "409", description = "Invalid review state")
+    @APIResponse(responseCode = "422", description = "Validation error")
     fun submitReview(@PathParam("taskId") taskId: String, @Valid request: TaskReviewRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -188,9 +218,11 @@ class TaskResource {
 
     @POST
     @Path("/{taskId}/comments")
+    @RolesAllowed("OPERATOR", "SHIFT_LEAD", "ENGINEER", "QA", "GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Tag(name = "Comments")
     @Operation(summary = "Add comment to task")
     @APIResponse(responseCode = "201", description = "Comment added")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun addComment(@PathParam("taskId") taskId: String, @Valid request: CreateCommentRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -200,8 +232,11 @@ class TaskResource {
 
     @PATCH
     @Path("/{taskId}/comments/{commentId}")
+    @RolesAllowed("OPERATOR", "SHIFT_LEAD", "ENGINEER", "QA", "GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Tag(name = "Comments")
     @Operation(summary = "Edit comment")
+    @APIResponse(responseCode = "200", description = "Edited")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun editComment(@PathParam("taskId") taskId: String, @PathParam("commentId") commentId: String, @Valid request: EditCommentRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -211,8 +246,11 @@ class TaskResource {
 
     @DELETE
     @Path("/{taskId}/comments/{commentId}")
+    @RolesAllowed("OPERATOR", "SHIFT_LEAD", "ENGINEER", "QA", "GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Tag(name = "Comments")
     @Operation(summary = "Soft-delete comment")
+    @APIResponse(responseCode = "204", description = "Deleted")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun deleteComment(@PathParam("taskId") taskId: String, @PathParam("commentId") commentId: String): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()

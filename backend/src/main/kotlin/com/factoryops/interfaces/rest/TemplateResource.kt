@@ -4,6 +4,7 @@ import com.factoryops.application.service.TemplateService
 import com.factoryops.interfaces.dto.PageInfo
 import com.factoryops.interfaces.filter.RequestContext
 import jakarta.annotation.security.PermitAll
+import jakarta.annotation.security.RolesAllowed
 import jakarta.inject.Inject
 import jakarta.ws.rs.Consumes
 import jakarta.ws.rs.DELETE
@@ -18,6 +19,7 @@ import jakarta.ws.rs.QueryParam
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
 import org.eclipse.microprofile.openapi.annotations.Operation
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse
 import org.eclipse.microprofile.openapi.annotations.tags.Tag
 
 @Path("/v1/system/project-templates")
@@ -41,7 +43,10 @@ class SystemProjectTemplateResource {
     }
 
     @POST
+    @RolesAllowed("ADMIN")
     @Operation(summary = "Create global project template (ADMIN)")
+    @APIResponse(responseCode = "201", description = "Created")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun create(body: Map<String, Any?>): Response {
         val actorId = requestContext.requireUserId()
         val template = templateService.createProjectTemplate(null, body, actorId)
@@ -59,7 +64,11 @@ class SystemProjectTemplateResource {
 
     @PATCH
     @Path("/{templateId}")
+    @RolesAllowed("ADMIN")
     @Operation(summary = "Update global project template (ADMIN)")
+    @APIResponse(responseCode = "200", description = "Updated")
+    @APIResponse(responseCode = "403", description = "Forbidden")
+    @APIResponse(responseCode = "422", description = "Template inactive or version conflict")
     fun update(@PathParam("templateId") templateId: String, body: Map<String, Any?>): Response {
         val template = templateService.updateProjectTemplate(templateId, body)
         return Response.ok(template).build()
@@ -67,7 +76,10 @@ class SystemProjectTemplateResource {
 
     @DELETE
     @Path("/{templateId}")
+    @RolesAllowed("ADMIN")
     @Operation(summary = "Deactivate global project template (ADMIN)")
+    @APIResponse(responseCode = "204", description = "Deactivated")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun deactivate(@PathParam("templateId") templateId: String): Response {
         templateService.deactivateProjectTemplate(templateId)
         return Response.noContent().build()
@@ -95,7 +107,10 @@ class SystemTaskTemplateResource {
     }
 
     @POST
+    @RolesAllowed("ADMIN")
     @Operation(summary = "Create global task template (ADMIN)")
+    @APIResponse(responseCode = "201", description = "Created")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun create(body: Map<String, Any?>): Response {
         val actorId = requestContext.requireUserId()
         val template = templateService.createTaskTemplate(null, body, actorId)
@@ -113,7 +128,11 @@ class SystemTaskTemplateResource {
 
     @PATCH
     @Path("/{templateId}")
+    @RolesAllowed("ADMIN")
     @Operation(summary = "Update global task template (ADMIN)")
+    @APIResponse(responseCode = "200", description = "Updated")
+    @APIResponse(responseCode = "403", description = "Forbidden")
+    @APIResponse(responseCode = "422", description = "Template inactive")
     fun update(@PathParam("templateId") templateId: String, body: Map<String, Any?>): Response {
         val template = templateService.updateTaskTemplate(templateId, body)
         return Response.ok(template).build()
@@ -121,7 +140,10 @@ class SystemTaskTemplateResource {
 
     @DELETE
     @Path("/{templateId}")
+    @RolesAllowed("ADMIN")
     @Operation(summary = "Deactivate global task template (ADMIN)")
+    @APIResponse(responseCode = "204", description = "Deactivated")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun deactivate(@PathParam("templateId") templateId: String): Response {
         templateService.deactivateTaskTemplate(templateId)
         return Response.noContent().build()
@@ -152,7 +174,10 @@ class OrgProjectTemplateResource {
     }
 
     @POST
+    @RolesAllowed("GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Create org project template")
+    @APIResponse(responseCode = "201", description = "Created")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun create(@PathParam("orgId") orgId: String, body: Map<String, Any?>): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -170,7 +195,11 @@ class OrgProjectTemplateResource {
 
     @PATCH
     @Path("/{templateId}")
-    @Operation(summary = "Update org project template (creates new version)")
+    @RolesAllowed("GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
+    @Operation(summary = "Update org project template (increments version)")
+    @APIResponse(responseCode = "200", description = "Updated")
+    @APIResponse(responseCode = "403", description = "Forbidden")
+    @APIResponse(responseCode = "422", description = "Template inactive")
     fun update(@PathParam("orgId") orgId: String, @PathParam("templateId") templateId: String, body: Map<String, Any?>): Response {
         val template = templateService.updateProjectTemplate(templateId, body)
         return Response.ok(template).build()
@@ -178,7 +207,10 @@ class OrgProjectTemplateResource {
 
     @DELETE
     @Path("/{templateId}")
+    @RolesAllowed("GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Deactivate org project template")
+    @APIResponse(responseCode = "204", description = "Deactivated")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun deactivate(@PathParam("orgId") orgId: String, @PathParam("templateId") templateId: String): Response {
         templateService.deactivateProjectTemplate(templateId)
         return Response.noContent().build()
@@ -210,7 +242,10 @@ class OrgTaskTemplateResource {
     }
 
     @POST
+    @RolesAllowed("GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Create org task template")
+    @APIResponse(responseCode = "201", description = "Created")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun create(@PathParam("orgId") orgId: String, body: Map<String, Any?>): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -228,7 +263,11 @@ class OrgTaskTemplateResource {
 
     @PATCH
     @Path("/{templateId}")
-    @Operation(summary = "Update org task template (creates new version)")
+    @RolesAllowed("GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
+    @Operation(summary = "Update org task template (increments version)")
+    @APIResponse(responseCode = "200", description = "Updated")
+    @APIResponse(responseCode = "403", description = "Forbidden")
+    @APIResponse(responseCode = "422", description = "Template inactive")
     fun update(@PathParam("orgId") orgId: String, @PathParam("templateId") templateId: String, body: Map<String, Any?>): Response {
         val template = templateService.updateTaskTemplate(templateId, body)
         return Response.ok(template).build()
@@ -236,7 +275,10 @@ class OrgTaskTemplateResource {
 
     @DELETE
     @Path("/{templateId}")
+    @RolesAllowed("GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Deactivate org task template")
+    @APIResponse(responseCode = "204", description = "Deactivated")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun deactivate(@PathParam("orgId") orgId: String, @PathParam("templateId") templateId: String): Response {
         templateService.deactivateTaskTemplate(templateId)
         return Response.noContent().build()
@@ -257,7 +299,10 @@ class ForkProjectTemplateResource {
 
     @POST
     @Path("/{globalTplId}")
+    @RolesAllowed("GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Fork global project template to org scope")
+    @APIResponse(responseCode = "201", description = "Forked")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun fork(@PathParam("orgId") orgId: String, @PathParam("globalTplId") globalTplId: String, body: Map<String, Any?>?): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -280,7 +325,10 @@ class ForkTaskTemplateResource {
 
     @POST
     @Path("/{globalTplId}")
+    @RolesAllowed("GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Fork global task template to org scope")
+    @APIResponse(responseCode = "201", description = "Forked")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun fork(@PathParam("orgId") orgId: String, @PathParam("globalTplId") globalTplId: String, body: Map<String, Any?>?): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()

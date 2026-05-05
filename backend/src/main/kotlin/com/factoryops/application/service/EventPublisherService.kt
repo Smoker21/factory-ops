@@ -6,6 +6,7 @@ import com.factoryops.persistence.document.EventOutboxDocument
 import com.factoryops.persistence.repository.EventOutboxRepository
 import com.github.f4b6a3.ulid.UlidCreator
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.transaction.Transactional
 import mu.KotlinLogging
 import org.bson.types.ObjectId
 import java.time.Instant
@@ -17,7 +18,13 @@ private val logger = KotlinLogging.logger {}
  * Writes domain events to the domain_event_outbox collection.
  * The OutboxPoller reads these and forwards to NATS + webhooks.
  */
+/**
+ * NOTE: @Transactional ensures outbox writes participate in the caller's transaction.
+ * If the caller rolls back, the outbox event is also rolled back (requires replica set on MongoDB).
+ * In dev/standalone mode Quarkus degrades to best-effort (no atomicity guarantee).
+ */
 @ApplicationScoped
+@Transactional
 class EventPublisherService(
     private val outboxRepository: EventOutboxRepository
 ) {
@@ -105,32 +112,28 @@ class EventPublisherService(
         actorId: String,
         payload: Map<String, Any?>
     ) {
-        try {
-            val now = Instant.now()
-            val eventId = UlidCreator.getUlid().toString()
-            val doc = EventOutboxDocument().also { d ->
-                d.rootOrgId = ObjectId(rootOrgId)
-                d.eventId = eventId
-                d.eventType = eventType
-                d.aggregateType = aggregateType
-                d.aggregateId = ObjectId(aggregateId)
-                d.payload = mapOf(
-                    "eventId" to eventId,
-                    "eventType" to eventType,
-                    "occurredAt" to now.toString(),
-                    "rootOrgId" to rootOrgId,
-                    "aggregateType" to aggregateType,
-                    "aggregateId" to aggregateId,
-                    "actorId" to actorId,
-                    "payload" to payload
-                )
-                d.scheduledAt = now
-                d.createdAt = now
-            }
-            outboxRepository.persist(doc)
-            logger.debug { "Published outbox event [$eventType] for aggregate [$aggregateId]" }
-        } catch (ex: Exception) {
-            logger.error(ex) { "Failed to write outbox event [$eventType] for aggregate [$aggregateId]" }
+        val now = Instant.now()
+        val eventId = UlidCreator.getUlid().toString()
+        val doc = EventOutboxDocument().also { d ->
+            d.rootOrgId = ObjectId(rootOrgId)
+            d.eventId = eventId
+            d.eventType = eventType
+            d.aggregateType = aggregateType
+            d.aggregateId = ObjectId(aggregateId)
+            d.payload = mapOf(
+                "eventId" to eventId,
+                "eventType" to eventType,
+                "occurredAt" to now.toString(),
+                "rootOrgId" to rootOrgId,
+                "aggregateType" to aggregateType,
+                "aggregateId" to aggregateId,
+                "actorId" to actorId,
+                "payload" to payload
+            )
+            d.scheduledAt = now
+            d.createdAt = now
         }
+        outboxRepository.persist(doc)
+        logger.debug { "Published outbox event [$eventType] for aggregate [$aggregateId]" }
     }
 }

@@ -7,6 +7,7 @@ import com.factoryops.domain.group.GroupSettings
 import com.factoryops.domain.group.QaSettings
 import com.factoryops.domain.shared.AuditEntry
 import com.factoryops.domain.shared.enums.Role
+import com.factoryops.interfaces.dto.PageInfo
 import com.factoryops.interfaces.exception.ConflictException
 import com.factoryops.interfaces.exception.NotFoundException
 import com.factoryops.interfaces.exception.ValidationException
@@ -21,13 +22,19 @@ import com.factoryops.persistence.repository.GroupRepository
 import com.factoryops.persistence.repository.OrganizationRepository
 import com.factoryops.persistence.repository.UserRepository
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.transaction.Transactional
 import mu.KotlinLogging
 import org.bson.types.ObjectId
 import java.time.Instant
 
 private val logger = KotlinLogging.logger {}
 
+/**
+ * NOTE: @Transactional is applied at class level. MongoDB transactions require a replica set.
+ * In dev/standalone mode Quarkus degrades to best-effort (no atomicity guarantee).
+ */
 @ApplicationScoped
+@Transactional
 class GroupService(
     private val groupRepository: GroupRepository,
     private val membershipRepository: GroupMembershipRepository,
@@ -35,21 +42,36 @@ class GroupService(
     private val userRepository: UserRepository
 ) {
 
-    fun listGroups(rootOrgId: String, organizationId: String?, type: String?, underOrgId: String?): List<Group> {
+    fun listGroups(
+        rootOrgId: String,
+        organizationId: String?,
+        type: String?,
+        underOrgId: String?,
+        cursor: String? = null,
+        limit: Int = 20
+    ): Pair<List<Group>, PageInfo> {
         val rootId = ObjectId(rootOrgId)
-        return when {
+        val pageSize = limit.coerceIn(1, 100)
+        val cursorId = cursor?.let { runCatching { ObjectId(it) }.getOrNull() }
+
+        val docs = when {
             underOrgId != null -> {
                 val nodeId = ObjectId(underOrgId)
-                val node = orgRepository.findByIdAndNotDeleted(nodeId)
+                val node = orgRepository.findByIdAndRootOrg(nodeId, rootId)
                 val descendants = orgRepository.findDescendants(nodeId)
                 val leafOrgs = (listOfNotNull(node) + descendants).filter { it.isLeaf }
                 groupRepository.findByOrganizationIds(rootId, leafOrgs.mapNotNull { it.id })
             }
             organizationId != null -> groupRepository.findByOrganizationId(rootId, ObjectId(organizationId))
-            else -> groupRepository.findByRootOrgId(rootId)
-        }
-            .filter { type == null || it.type == type }
-            .map { GroupMapper.toDomain(it) }
+            type != null -> groupRepository.findByRootOrgId(rootId)
+            else -> groupRepository.findWithCursor(rootId, cursorId, pageSize + 1)
+        }.filter { type == null || it.type == type }
+
+        val hasMore = (organizationId == null && underOrgId == null && type == null) && docs.size > pageSize
+        val items = if (hasMore) docs.dropLast(1) else docs
+        val nextCursor = if (hasMore) items.lastOrNull()?.id?.toHexString() else null
+
+        return items.map { GroupMapper.toDomain(it) } to PageInfo(nextCursor, hasMore)
     }
 
     fun getGroup(groupId: String, rootOrgId: String): Group {
@@ -70,7 +92,7 @@ class GroupService(
     ): Group {
         val rootId = ObjectId(rootOrgId)
 
-        val orgDoc = orgRepository.findByIdAndNotDeleted(ObjectId(organizationId))
+        val orgDoc = orgRepository.findByIdAndRootOrg(ObjectId(organizationId), rootId)
             ?: throw NotFoundException("Organization not found: $organizationId")
         if (!orgDoc.isLeaf) {
             throw ValidationException("Organization must be a leaf type to contain groups", "org_not_leaf")
@@ -150,6 +172,13 @@ class GroupService(
         qa?.let { newQa ->
             if (newQa.dualSignRequired && newQa.requiredReviewerRoles.isEmpty()) {
                 throw ValidationException("requiredReviewerRoles cannot be empty when dualSignRequired is true", "qa_roles_required")
+            }
+            // INV-35: reviewer roles must be first-line operational roles only
+            val allowedReviewerRoles = setOf("OPERATOR", "SHIFT_LEAD", "ENGINEER", "QA", "GROUP_ADMIN", "GROUP_MANAGER")
+            val requestedRoles = newQa.requiredReviewerRoles.map { it.name }.toSet()
+            if (!allowedReviewerRoles.containsAll(requestedRoles)) {
+                val invalidRoles = requestedRoles - allowedReviewerRoles
+                throw ValidationException("Invalid reviewer roles: $invalidRoles. Allowed: $allowedReviewerRoles", "invalid_reviewer_role")
             }
             doc.settings.qa = QaSettingsDocument().also { q ->
                 q.dualSignRequired = newQa.dualSignRequired

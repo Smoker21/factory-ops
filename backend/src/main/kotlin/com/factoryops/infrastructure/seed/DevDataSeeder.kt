@@ -67,9 +67,11 @@ class DevDataSeeder(
 
         val now = Instant.now()
 
-        // 1. Create root org (FAB)
+        // 1. Create root org (FAB) — pre-generate id so rootOrgId = self in a single persist
+        val rootId = ObjectId()
         val rootOrg = OrganizationDocument().also { d ->
-            d.rootOrgId = ObjectId() // will be updated to self
+            d.id = rootId
+            d.rootOrgId = rootId
             d.parentId = null
             d.type = "FAB"
             d.name = "台中廠"
@@ -90,10 +92,6 @@ class DevDataSeeder(
             d.updatedAt = now
         }
         orgRepository.persist(rootOrg)
-        // Update rootOrgId to be self
-        val rootId: ObjectId = rootOrg.id!!
-        rootOrg.rootOrgId = rootId
-        orgRepository.update(rootOrg)
         logger.info { "Seeded root org [$rootId] 台中廠" }
 
         // 2. Create DIVISION

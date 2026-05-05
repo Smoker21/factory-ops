@@ -15,6 +15,11 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import java.time.Instant
 
+/**
+ * Integration tests for DispatchService via @QuarkusTest + MongoDB DevServices.
+ * Requires Docker (Testcontainers) for MongoDB replica set.
+ * Business logic is also covered by unit/DispatchServiceUnitTest.kt (no Docker).
+ */
 @QuarkusTest
 class DispatchServiceTest {
 
@@ -65,7 +70,7 @@ class DispatchServiceTest {
 
         assertThrows(ValidationException::class.java) {
             dispatchService.dispatchActionRequest(
-                targetOrgId = nonLeaf.id.toHexString(),
+                targetOrgId = nonLeaf.id!!.toHexString(),
                 title = "Test dispatch",
                 descriptionMarkdown = null,
                 severityLevel = SeverityLevel.LOW,
@@ -87,7 +92,7 @@ class DispatchServiceTest {
 
         assertThrows(ForbiddenException::class.java) {
             dispatchService.dispatchActionRequest(
-                targetOrgId = leafOrg.id.toHexString(),
+                targetOrgId = leafOrg.id!!.toHexString(),
                 title = "Test dispatch",
                 descriptionMarkdown = null,
                 severityLevel = SeverityLevel.LOW,
@@ -108,7 +113,7 @@ class DispatchServiceTest {
 
         assertThrows(ConflictException::class.java) {
             dispatchService.dispatchActionRequest(
-                targetOrgId = leafOrg.id.toHexString(),
+                targetOrgId = leafOrg.id!!.toHexString(),
                 title = "Test dispatch",
                 descriptionMarkdown = null,
                 severityLevel = SeverityLevel.LOW,
@@ -129,7 +134,7 @@ class DispatchServiceTest {
         val leafOrg = createLeafOrg(rootId, listOf(leaderId))
 
         val ar = dispatchService.dispatchActionRequest(
-            targetOrgId = leafOrg.id.toHexString(),
+            targetOrgId = leafOrg.id!!.toHexString(),
             title = "Auto-assign dispatch",
             descriptionMarkdown = "Test",
             severityLevel = SeverityLevel.MEDIUM,
@@ -154,7 +159,7 @@ class DispatchServiceTest {
 
         assertThrows(ValidationException::class.java) {
             dispatchService.dispatchActionRequest(
-                targetOrgId = leafOrg.id.toHexString(),
+                targetOrgId = leafOrg.id!!.toHexString(),
                 title = "Multi-leader dispatch",
                 descriptionMarkdown = null,
                 severityLevel = SeverityLevel.HIGH,

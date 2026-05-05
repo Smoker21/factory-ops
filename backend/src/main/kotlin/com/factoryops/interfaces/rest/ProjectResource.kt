@@ -16,10 +16,12 @@ import com.factoryops.interfaces.dto.UpdateProjectRequest
 import com.factoryops.interfaces.exception.ValidationException
 import com.factoryops.interfaces.dto.toResponse
 import com.factoryops.interfaces.filter.RequestContext
+import jakarta.annotation.security.RolesAllowed
 import jakarta.inject.Inject
 import jakarta.validation.Valid
 import jakarta.ws.rs.Consumes
 import jakarta.ws.rs.DELETE
+import jakarta.ws.rs.DefaultValue
 import jakarta.ws.rs.GET
 import jakarta.ws.rs.PATCH
 import jakarta.ws.rs.POST
@@ -47,21 +49,26 @@ class ProjectResource {
     lateinit var requestContext: RequestContext
 
     @GET
-    @Operation(summary = "List projects")
+    @Operation(summary = "List projects with optional cursor-based pagination")
+    @APIResponse(responseCode = "200", description = "Project page")
     fun list(
         @QueryParam("status") status: String?,
         @QueryParam("ownerId") ownerId: String?,
         @QueryParam("memberId") memberId: String?,
-        @QueryParam("groupId") groupId: String?
+        @QueryParam("groupId") groupId: String?,
+        @QueryParam("cursor") cursor: String?,
+        @QueryParam("limit") @DefaultValue("20") limit: Int
     ): Response {
         val rootOrgId = requestContext.requireRootOrgId()
-        val projects = projectService.listProjects(rootOrgId, status, ownerId, memberId, groupId)
-        return Response.ok(ProjectPageResponse(projects.map { it.toResponse() }, PageInfo(null, false))).build()
+        val (projects, pageInfo) = projectService.listProjects(rootOrgId, status, ownerId, memberId, groupId, cursor, limit)
+        return Response.ok(ProjectPageResponse(projects.map { it.toResponse() }, pageInfo)).build()
     }
 
     @POST
+    @RolesAllowed("SHIFT_LEAD", "GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Create project")
     @APIResponse(responseCode = "201", description = "Project created")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun create(@Valid request: CreateProjectRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -91,7 +98,10 @@ class ProjectResource {
 
     @PATCH
     @Path("/{projectId}")
+    @RolesAllowed("GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Update project")
+    @APIResponse(responseCode = "200", description = "Updated")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun update(@PathParam("projectId") projectId: String, @Valid request: UpdateProjectRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -101,7 +111,10 @@ class ProjectResource {
 
     @DELETE
     @Path("/{projectId}")
+    @RolesAllowed("GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Soft-delete project")
+    @APIResponse(responseCode = "204", description = "Deleted")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun delete(@PathParam("projectId") projectId: String): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -111,7 +124,10 @@ class ProjectResource {
 
     @POST
     @Path("/{projectId}/status")
+    @RolesAllowed("SHIFT_LEAD", "GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Change project status")
+    @APIResponse(responseCode = "200", description = "Status changed")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun changeStatus(@PathParam("projectId") projectId: String, @Valid request: ChangeProjectStatusRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -123,7 +139,10 @@ class ProjectResource {
 
     @POST
     @Path("/{projectId}/owner")
+    @RolesAllowed("GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Transfer project owner")
+    @APIResponse(responseCode = "200", description = "Owner transferred")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun transferOwner(@PathParam("projectId") projectId: String, @Valid request: ChangeProjectOwnerRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -143,8 +162,11 @@ class ProjectResource {
 
     @POST
     @Path("/{projectId}/members")
+    @RolesAllowed("SHIFT_LEAD", "GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Tag(name = "Memberships")
     @Operation(summary = "Add project member")
+    @APIResponse(responseCode = "201", description = "Member added")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun addMember(@PathParam("projectId") projectId: String, @Valid request: AddProjectMemberRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -155,8 +177,11 @@ class ProjectResource {
 
     @DELETE
     @Path("/{projectId}/members/{userId}")
+    @RolesAllowed("SHIFT_LEAD", "GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Tag(name = "Memberships")
     @Operation(summary = "Remove project member")
+    @APIResponse(responseCode = "204", description = "Removed")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun removeMember(@PathParam("projectId") projectId: String, @PathParam("userId") userId: String): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()

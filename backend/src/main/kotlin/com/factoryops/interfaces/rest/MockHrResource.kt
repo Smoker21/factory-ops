@@ -2,6 +2,7 @@ package com.factoryops.interfaces.rest
 
 import com.factoryops.infrastructure.hr.HrEmployee
 import com.factoryops.infrastructure.hr.MockHrClient
+import io.quarkus.arc.profile.IfBuildProfile
 import jakarta.annotation.security.PermitAll
 import jakarta.inject.Inject
 import jakarta.ws.rs.GET
@@ -14,10 +15,11 @@ import org.eclipse.microprofile.openapi.annotations.Operation
 import org.eclipse.microprofile.openapi.annotations.tags.Tag
 
 /**
- * Mock HR REST resource for development (ADR-0007).
- * In production, this resource should not be active.
- * The `hr.mode` property controls whether the mock client is used.
+ * Mock HR REST resource for development only (ADR-0007).
+ * This resource is excluded from prod builds via @IfBuildProfile("dev").
+ * The `hr.mode` property controls whether the mock client is used at runtime.
  */
+@IfBuildProfile("dev")
 @Path("/mock-hr")
 @Produces(MediaType.APPLICATION_JSON)
 @Tag(name = "MockHR")

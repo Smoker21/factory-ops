@@ -25,6 +25,14 @@ class UserRepository : PanacheMongoRepository<UserDocument> {
         val query = "rootOrgId = ?1 and deletedAt is null and (accountName like ?2 or displayName like ?2 or email like ?2 or employeeNo like ?2)"
         return find(query, rootOrgId, ".*$keyword.*").list()
     }
+
+    fun findWithCursor(rootOrgId: ObjectId, cursor: org.bson.types.ObjectId?, limit: Int): List<UserDocument> {
+        val baseFilter = org.bson.Document("rootOrgId", rootOrgId).append("deletedAt", null)
+        val filter = if (cursor != null) {
+            org.bson.Document("\$and", listOf(baseFilter, org.bson.Document("_id", org.bson.Document("\$gt", cursor))))
+        } else baseFilter
+        return find(filter).page(0, limit).list()
+    }
 }
 
 @ApplicationScoped

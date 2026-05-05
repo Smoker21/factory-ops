@@ -1,8 +1,26 @@
 # Factory Ops — 工廠值班工作管理系統
 
+[![CI](https://github.com/smoker21/factory-ops/actions/workflows/ci.yml/badge.svg)](https://github.com/smoker21/factory-ops/actions/workflows/ci.yml)
+
 服務工廠值班團隊的工作管理系統:**追蹤跨班別 Project / Task / 異常處置 / 交班事項**,把現場「口頭交辦」「便利貼」「Excel 工單」改成可稽核的數位工作流。
 
 採 **API-first** 設計、**多租戶**、**多型 Task / Group / Organization**、**HR 整合**、**NATS + Webhook 事件**、**行動裝置友善**。
+
+---
+
+## 30 秒快速開始
+
+```bash
+git clone https://github.com/<your-org>/factory-ops.git && cd factory-ops
+cp .env.example .env
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# 等待 ~60 秒服務就緒後：
+# 前端  → http://localhost:5173
+# API   → http://localhost:8080/q/swagger-ui
+# MinIO → http://localhost:9001
+```
+
+預設 dev 帳號：`admin.system` / `Admin@123456789`（orgCode: `fab-alpha`）
 
 ---
 
@@ -12,8 +30,8 @@
 |---|---|---|
 | **M1** 規格與架構 | requirements v1.3.0 / domain-model / openapi 3.1 / 13 ADR | ✅ 已完成 |
 | **M2** 資料模型 | 16 collections schema、40 Kotlin domain class、index script | ✅ 已完成 |
-| **M3** 後端 + 前端骨架 | Quarkus REST(~85 端點)+ React/TS UI(13 頁面)+ MSW mock | ✅ 已完成(編譯/測試通過,runtime 尚未驗證) |
-| **M4** 測試 + 審查 + CI/CD | 測試覆蓋、code review、docker compose、CI pipeline | ⏳ 規劃中 |
+| **M3** 後端 + 前端骨架 | Quarkus REST(~85 端點)+ React/TS UI(13 頁面)+ MSW mock | ✅ 已完成 |
+| **M4** 測試 + 審查 + CI/CD | 測試覆蓋、code review、docker compose、CI pipeline | ✅ 已完成 |
 
 ---
 
@@ -52,14 +70,37 @@
 
 ---
 
-## 快速開始(本機開發)
+## 快速開始
+
+### Docker Compose（推薦，5 分鐘啟動完整環境）
+
+先備：Docker Engine 24.0+（4GB 可用記憶體）
+
+```bash
+cp .env.example .env
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+```
+
+服務就緒後（約 60 秒）：
+- 前端：http://localhost:5173
+- Swagger UI：http://localhost:8080/q/swagger-ui
+- MinIO Console：http://localhost:9001
+
+預設 dev 帳號：`admin.system` / `Admin@123456789`（orgCode: `fab-alpha`）
+
+詳細部署說明（production checklist / JWT key rotation / 備份）：[docs/deployment.md](docs/deployment.md)
+
+---
+
+## 本機開發（不用 Docker）
 
 ### 先備
 
-- JDK 21(本案以 Microsoft OpenJDK 21 為準)
+- JDK 21（本案以 Microsoft OpenJDK 21 為準）
 - Node.js 20+
-- Docker(待 M4 提供 docker compose)
-- 暫時手動跑 MongoDB 7 / MinIO / NATS(M4 會打包)
+- MongoDB 7（本機啟動，需要 replica set）
+- MinIO（本機啟動）
+- NATS（可選，dev profile 預設停用）
 
 ### 後端
 
@@ -75,12 +116,12 @@ export JAVA_HOME='/c/Program Files/Microsoft/jdk-21.0.10.7-hotspot'
 ./gradlew quarkusDev
 ```
 
-啟動後:
-- API:http://localhost:8080
-- Swagger UI:http://localhost:8080/q/swagger-ui
-- Health:http://localhost:8080/q/health
+啟動後：
+- API：http://localhost:8080
+- Swagger UI：http://localhost:8080/q/swagger-ui
+- Health：http://localhost:8080/q/health
 
-`dev` profile 會自動 seed 一份 4 層 Org 樹 + 5 位假員工 + 1 個 Project + 數個 Task,便於 UI 立刻可用。
+`dev` profile 會自動 seed 一份 4 層 Org 樹 + 5 位假員工 + 1 個 Project + 數個 Task，便於 UI 立刻可用。
 
 ### 前端
 
@@ -90,13 +131,13 @@ npm install
 npm run dev
 ```
 
-預設開 http://localhost:5173。若後端尚未啟動,前端會 fallback 到 MSW mock(可離線跑 E2E)。
+預設開 http://localhost:5173。若後端尚未啟動，前端會 fallback 到 MSW mock（可離線跑 E2E）。
 
 ### 環境變數
 
-複製 `frontend/.env.local.example` 為 `frontend/.env.local`,設定 `VITE_API_BASE_URL`。
+複製 `frontend/.env.local.example` 為 `frontend/.env.local`，設定 `VITE_API_BASE_URL`。
 
-後端用 env / `application-dev.properties`,主要 keys:
+後端用 env / `application-dev.properties`，主要 keys：
 
 ```properties
 quarkus.mongodb.connection-string=mongodb://localhost:27017
@@ -119,25 +160,47 @@ mongosh factory_ops backend/src/main/resources/db/init-indexes.js
 ```
 factory-ops/
 ├── README.md                       # 你正在讀的這個
-├── AGENTS_PACK.md                  # Agent 團隊安裝包說明(自動化開發流程)
+├── CHANGELOG.md                    # 版本紀錄（Keep a Changelog）
+├── CONTRIBUTING.md                 # 貢獻指南
+├── AGENTS_PACK.md                  # Agent 團隊安裝包說明
 ├── CLAUDE.md                       # 給 Claude Code 的協調設定
 ├── STATUS.md                       # 全專案里程碑狀態
-├── .claude/agents/                 # 7 個 subagent 定義(spec / data / backend / frontend / test / review / docs)
+├── .env.example                    # 環境變數範例（複製為 .env）
+├── docker-compose.yml              # 共用服務圖（mongo / nats / minio / backend / frontend）
+├── docker-compose.dev.yml          # Dev 覆寫（seed data / Swagger / dev JWT keys）
+├── docker-compose.prod.yml         # Prod 覆寫（resource limits / restart:always）
+├── docker/                         # Docker 初始化腳本
+│   ├── mongo-rs-init.js            # MongoDB replica set 初始化（冪等）
+│   └── minio-init.sh               # MinIO bucket 建立（冪等）
+├── .github/workflows/
+│   ├── ci.yml                      # PR + push to main CI pipeline
+│   ├── release.yml                 # tag v* → GHCR push + GitHub Release
+│   └── codeql.yml                  # 每週 CodeQL 靜態分析
 ├── docs/
-│   ├── spec/                       # 需求 / 領域模型 / OpenAPI / spec STATUS
-│   ├── data/                       # MongoDB schema / indexes / 範例文件
+│   ├── architecture.md             # 系統架構圖 + 模組職責 + 資料流
+│   ├── deployment.md               # 部署指引 + JWT rotation + 備份
+│   ├── operations.md               # 維運手冊（health / log / 排查）
+│   ├── spec/                       # 需求 / 領域模型 / OpenAPI
+│   ├── data/                       # MongoDB schema / indexes
 │   ├── adr/                        # 13 份架構決策紀錄
-│   ├── backend/                    # 後端銜接訊息與啟動指引
-│   └── frontend/                   # 前端銜接訊息
+│   ├── api/
+│   │   ├── index.html              # Redoc 靜態 API 文件（自動生成）
+│   │   └── README.md               # API 文件入口 + 認證 + 錯誤代碼
+│   ├── devops/                     # DevOps agent STATUS
+│   ├── test/                       # 測試覆蓋率報告
+│   └── review/                     # Code review 報告
 ├── backend/                        # Kotlin + Quarkus + MongoDB
+│   ├── Dockerfile
 │   ├── build.gradle.kts
 │   └── src/main/kotlin/com/factoryops/
-│       ├── domain/                 # 純資料 Domain class(無 BSON / Panache)
+│       ├── domain/                 # 純資料 Domain class（無框架依賴）
 │       ├── persistence/            # Document + Repository + Mapper
 │       ├── application/            # Service + Auth + Policy
 │       ├── interfaces/             # REST + DTO + Exception + Filter
 │       └── infrastructure/         # NATS / Webhook / Outbox / MinIO / HR
 └── frontend/                       # React + TypeScript + Vite
+    ├── Dockerfile
+    ├── nginx.conf
     └── src/
         ├── routes/                 # 13 頁面
         ├── components/             # 17 元件
@@ -150,13 +213,20 @@ factory-ops/
 
 ## 重要文件入口
 
-- 系統概述與需求:[docs/spec/requirements.md](docs/spec/requirements.md)
-- 領域模型(含 Mermaid 類圖):[docs/spec/domain-model.md](docs/spec/domain-model.md)
-- API 合約(OpenAPI 3.1):[docs/spec/openapi.yaml](docs/spec/openapi.yaml)
-- 資料模型(16 collections):[docs/data/schema.md](docs/data/schema.md)
-- 索引設計:[docs/data/indexes.md](docs/data/indexes.md)
-- 架構決策(ADR):[docs/adr/](docs/adr/)
-- 全域進度:[STATUS.md](STATUS.md)
+- 系統架構圖與模組說明：[docs/architecture.md](docs/architecture.md)
+- 部署指引（Docker / JWT / 備份）：[docs/deployment.md](docs/deployment.md)
+- 維運手冊（Health check / 排查 / Metric）：[docs/operations.md](docs/operations.md)
+- API 文件（靜態 HTML）：[docs/api/index.html](docs/api/index.html)
+- API 文件入口：[docs/api/README.md](docs/api/README.md)
+- 系統概述與需求：[docs/spec/requirements.md](docs/spec/requirements.md)
+- 領域模型（含 Mermaid 類圖）：[docs/spec/domain-model.md](docs/spec/domain-model.md)
+- API 合約（OpenAPI 3.1）：[docs/spec/openapi.yaml](docs/spec/openapi.yaml)
+- 資料模型（16 collections）：[docs/data/schema.md](docs/data/schema.md)
+- 索引設計：[docs/data/indexes.md](docs/data/indexes.md)
+- 架構決策（ADR）：[docs/adr/](docs/adr/)
+- 全域進度：[STATUS.md](STATUS.md)
+- 版本紀錄：[CHANGELOG.md](CHANGELOG.md)
+- 貢獻指南：[CONTRIBUTING.md](CONTRIBUTING.md)
 
 ### 關鍵 ADR
 
@@ -206,6 +276,47 @@ factory-ops/
 
 ---
 
+## 常用指令
+
+### 後端
+
+```bash
+cd backend
+./gradlew test                      # 執行測試（需要 Docker for DevServices）
+./gradlew test jacocoTestReport      # 測試 + 產生覆蓋率報告
+./gradlew build -x test              # 編譯（跳過測試）
+./gradlew quarkusDev                 # 開發模式（hot reload）
+```
+
+### 前端
+
+```bash
+cd frontend
+npm test                 # 執行 unit tests
+npm run test:coverage    # tests + coverage report
+npm run typecheck        # TypeScript 型別檢查
+npm run lint             # ESLint 靜態分析
+npm run build            # 生產 build
+```
+
+### Docker
+
+```bash
+# Dev 啟動（含 seed data + Swagger）
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+# 查看 logs
+docker compose logs -f backend
+
+# 重啟單一服務
+docker compose restart backend
+
+# 完整清除（含 volumes）
+docker compose down -v
+```
+
+---
+
 ## License
 
-待定。
+TBD（待使用者確認 MIT 或 Apache 2.0）

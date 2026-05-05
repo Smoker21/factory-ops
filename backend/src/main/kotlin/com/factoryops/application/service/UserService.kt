@@ -4,6 +4,8 @@ import com.factoryops.application.auth.PasswordHasher
 import com.factoryops.domain.shared.enums.Role
 import com.factoryops.domain.user.User
 import com.factoryops.infrastructure.hr.HrClient
+import com.factoryops.interfaces.dto.PageInfo
+import com.factoryops.interfaces.exception.BusinessRuleViolationException
 import com.factoryops.interfaces.exception.ConflictException
 import com.factoryops.interfaces.exception.ExternalServiceException
 import com.factoryops.interfaces.exception.NotFoundException
@@ -12,13 +14,19 @@ import com.factoryops.persistence.mapper.UserMapper
 import com.factoryops.persistence.repository.UserCredentialsRepository
 import com.factoryops.persistence.repository.UserRepository
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.transaction.Transactional
 import mu.KotlinLogging
 import org.bson.types.ObjectId
 import java.time.Instant
 
 private val logger = KotlinLogging.logger {}
 
+/**
+ * NOTE: @Transactional is applied at class level. MongoDB transactions require a replica set.
+ * In dev/standalone mode Quarkus degrades to best-effort (no atomicity guarantee).
+ */
 @ApplicationScoped
+@Transactional
 class UserService(
     private val userRepository: UserRepository,
     private val credentialsRepository: UserCredentialsRepository,
@@ -26,16 +34,28 @@ class UserService(
     private val passwordHasher: PasswordHasher
 ) {
 
-    fun listUsers(rootOrgId: String, q: String?, active: Boolean?): List<User> {
+    fun listUsers(
+        rootOrgId: String,
+        q: String?,
+        active: Boolean?,
+        cursor: String? = null,
+        limit: Int = 20
+    ): Pair<List<User>, PageInfo> {
         val rootId = ObjectId(rootOrgId)
-        val docs = if (!q.isNullOrBlank()) {
-            userRepository.searchByKeyword(rootId, q)
-        } else if (active == true) {
-            userRepository.findActiveByRootOrgId(rootId)
-        } else {
-            userRepository.findByRootOrgId(rootId)
+        val pageSize = limit.coerceIn(1, 100)
+        val cursorId = cursor?.let { runCatching { ObjectId(it) }.getOrNull() }
+
+        val docs = when {
+            !q.isNullOrBlank() -> userRepository.searchByKeyword(rootId, q)
+            active == true -> userRepository.findActiveByRootOrgId(rootId)
+            else -> userRepository.findWithCursor(rootId, cursorId, pageSize + 1)
         }
-        return docs.map { UserMapper.toDomain(it) }
+
+        val hasMore = (q.isNullOrBlank() && active != true) && docs.size > pageSize
+        val items = if (hasMore) docs.dropLast(1) else docs
+        val nextCursor = if (hasMore) items.lastOrNull()?.id?.toHexString() else null
+
+        return items.map { UserMapper.toDomain(it) } to PageInfo(nextCursor, hasMore)
     }
 
     fun getUser(userId: String, rootOrgId: String): User {
@@ -108,7 +128,11 @@ class UserService(
         return UserMapper.toDomain(userDoc)
     }
 
-    fun updateUser(userId: String, rootOrgId: String, roles: List<Role>?, active: Boolean?): User {
+    @Transactional
+    fun updateUser(userId: String, rootOrgId: String, roles: List<Role>?, active: Boolean?, actorId: String): User {
+        if (actorId == userId && roles != null) {
+            throw BusinessRuleViolationException("Cannot modify your own roles", "cannot_modify_own_roles")
+        }
         val doc = userRepository.findByIdAndNotDeleted(ObjectId(userId), ObjectId(rootOrgId))
             ?: throw NotFoundException("User not found: $userId")
 

@@ -15,6 +15,7 @@ import com.factoryops.interfaces.dto.UpdateGroupSettingsRequest
 import com.factoryops.interfaces.dto.toDomain
 import com.factoryops.interfaces.dto.toResponse
 import com.factoryops.interfaces.filter.RequestContext
+import jakarta.annotation.security.RolesAllowed
 import jakarta.inject.Inject
 import jakarta.validation.Valid
 import jakarta.ws.rs.Consumes
@@ -46,21 +47,26 @@ class GroupResource {
     lateinit var requestContext: RequestContext
 
     @GET
-    @Operation(summary = "List groups")
+    @Operation(summary = "List groups with optional cursor-based pagination")
+    @APIResponse(responseCode = "200", description = "Group page")
     fun listGroups(
         @PathParam("orgId") orgId: String,
         @QueryParam("organizationId") organizationId: String?,
         @QueryParam("type") type: String?,
-        @QueryParam("underOrgId") underOrgId: String?
+        @QueryParam("underOrgId") underOrgId: String?,
+        @QueryParam("cursor") cursor: String?,
+        @QueryParam("limit") @DefaultValue("20") limit: Int
     ): Response {
         val rootOrgId = requestContext.requireRootOrgId()
-        val groups = groupService.listGroups(rootOrgId, organizationId, type, underOrgId)
-        return Response.ok(GroupPageResponse(groups.map { it.toResponse() }, PageInfo(null, false))).build()
+        val (groups, pageInfo) = groupService.listGroups(rootOrgId, organizationId, type, underOrgId, cursor, limit)
+        return Response.ok(GroupPageResponse(groups.map { it.toResponse() }, pageInfo)).build()
     }
 
     @POST
+    @RolesAllowed("GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Create group")
     @APIResponse(responseCode = "201", description = "Group created")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun createGroup(@PathParam("orgId") orgId: String, @Valid request: CreateGroupRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -79,7 +85,10 @@ class GroupResource {
 
     @PATCH
     @Path("/{groupId}")
+    @RolesAllowed("GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Update group")
+    @APIResponse(responseCode = "200", description = "Updated")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun updateGroup(@PathParam("orgId") orgId: String, @PathParam("groupId") groupId: String, @Valid request: UpdateGroupRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -89,7 +98,10 @@ class GroupResource {
 
     @DELETE
     @Path("/{groupId}")
+    @RolesAllowed("GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Soft-delete group")
+    @APIResponse(responseCode = "204", description = "Deleted")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun deleteGroup(@PathParam("orgId") orgId: String, @PathParam("groupId") groupId: String): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -108,7 +120,11 @@ class GroupResource {
 
     @PATCH
     @Path("/{groupId}/settings")
+    @RolesAllowed("GROUP_MANAGER", "GROUP_ADMIN", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Update group settings")
+    @APIResponse(responseCode = "200", description = "Updated")
+    @APIResponse(responseCode = "403", description = "Forbidden")
+    @APIResponse(responseCode = "422", description = "Invalid reviewer roles")
     fun updateSettings(@PathParam("orgId") orgId: String, @PathParam("groupId") groupId: String, @Valid request: UpdateGroupSettingsRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -131,8 +147,10 @@ class GroupResource {
 
     @POST
     @Path("/{groupId}/members")
+    @RolesAllowed("GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Add member to group")
     @APIResponse(responseCode = "201", description = "Member added")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun addMember(@PathParam("orgId") orgId: String, @PathParam("groupId") groupId: String, @Valid request: AddGroupMemberRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -143,7 +161,10 @@ class GroupResource {
 
     @DELETE
     @Path("/{groupId}/members/{userId}")
+    @RolesAllowed("GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Remove member from group")
+    @APIResponse(responseCode = "204", description = "Removed")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun removeMember(@PathParam("orgId") orgId: String, @PathParam("groupId") groupId: String, @PathParam("userId") userId: String): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -153,8 +174,11 @@ class GroupResource {
 
     @POST
     @Path("/{groupId}/transfer-leader")
+    @RolesAllowed("GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Tag(name = "GroupMemberships")
     @Operation(summary = "Transfer group leader")
+    @APIResponse(responseCode = "200", description = "Leader transferred")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun transferLeader(@PathParam("orgId") orgId: String, @PathParam("groupId") groupId: String, @Valid request: TransferGroupLeaderRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()

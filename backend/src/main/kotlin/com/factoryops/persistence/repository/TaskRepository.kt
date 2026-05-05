@@ -29,4 +29,12 @@ class TaskRepository : PanacheMongoRepository<TaskDocument> {
 
     fun countActiveByProjectId(rootOrgId: ObjectId, projectId: ObjectId): Long =
         count("rootOrgId = ?1 and projectId = ?2 and deletedAt is null and status not in ['DONE', 'CANCELLED']", rootOrgId, projectId)
+
+    fun findWithCursor(rootOrgId: ObjectId, cursor: ObjectId?, limit: Int): List<TaskDocument> {
+        val baseFilter = Document("rootOrgId", rootOrgId).append("deletedAt", null)
+        val filter = if (cursor != null) {
+            Document("\$and", listOf(baseFilter, Document("_id", Document("\$gt", cursor))))
+        } else baseFilter
+        return find(filter).page(0, limit).list()
+    }
 }

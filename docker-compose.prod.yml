@@ -1,0 +1,73 @@
+# ======================================================
+# Factory Ops — Production 覆寫
+# 用途：資源限制、restart policy、internal network、隱藏 port
+#
+# 使用：docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# 必填環境變數（透過 .env 或 CI secrets 注入）：
+#   JWT_PUBLIC_KEY_PATH, JWT_PRIVATE_KEY_PATH
+#   MINIO_ROOT_USER, MINIO_ROOT_PASSWORD
+#   CORS_ORIGINS
+# ======================================================
+
+services:
+
+  mongo:
+    ports: []  # 不暴露 MongoDB port 到 host
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    restart: always
+
+  mongo-rs-init:
+    restart: "no"
+
+  mongo-idx-init:
+    restart: "no"
+
+  nats:
+    ports: []  # 不暴露 NATS port 到 host
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    restart: always
+
+  minio:
+    ports:
+      - "9000:9000"   # API port 需對外（或透過反向代理）
+      - "9001:9001"   # Console port 建議僅內網
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    restart: always
+
+  backend:
+    ports:
+      - "8080:8080"
+    environment:
+      QUARKUS_PROFILE: prod
+      SWAGGER_ENABLED: "false"
+      # JWT keys 必須透過 volume mount 或 secret manager 注入
+      JWT_PUBLIC_KEY_PATH: ${JWT_PUBLIC_KEY_PATH}
+      JWT_PRIVATE_KEY_PATH: ${JWT_PRIVATE_KEY_PATH}
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+    restart: always
+
+  frontend:
+    ports:
+      - "80:80"
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+    restart: always
+
+networks:
+  default:
+    name: factory-ops-net

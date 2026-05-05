@@ -6,6 +6,7 @@ import com.factoryops.domain.project.Project
 import com.factoryops.domain.project.ProjectStatus
 import com.factoryops.domain.shared.AuditEntry
 import com.factoryops.domain.shared.TimeRange
+import com.factoryops.interfaces.dto.PageInfo
 import com.factoryops.interfaces.exception.ConflictException
 import com.factoryops.interfaces.exception.NotFoundException
 import com.factoryops.interfaces.exception.StateTransitionException
@@ -20,13 +21,19 @@ import com.factoryops.persistence.repository.OrganizationRepository
 import com.factoryops.persistence.repository.ProjectRepository
 import com.factoryops.persistence.repository.UserRepository
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.transaction.Transactional
 import mu.KotlinLogging
 import org.bson.types.ObjectId
 import java.time.Instant
 
 private val logger = KotlinLogging.logger {}
 
+/**
+ * NOTE: @Transactional is applied at class level. MongoDB transactions require a replica set.
+ * In dev/standalone mode Quarkus degrades to best-effort (no atomicity guarantee).
+ */
 @ApplicationScoped
+@Transactional
 class ProjectService(
     private val projectRepository: ProjectRepository,
     private val membershipRepository: MembershipRepository,
@@ -35,16 +42,37 @@ class ProjectService(
     private val userRepository: UserRepository
 ) {
 
-    fun listProjects(rootOrgId: String, status: String?, ownerId: String?, memberId: String?, groupId: String?): List<Project> {
+    fun listProjects(
+        rootOrgId: String,
+        status: String?,
+        ownerId: String?,
+        memberId: String?,
+        groupId: String?,
+        cursor: String? = null,
+        limit: Int = 20
+    ): Pair<List<Project>, PageInfo> {
         val rootId = ObjectId(rootOrgId)
-        val projects = when {
-            groupId != null -> projectRepository.findByGroupId(rootId, ObjectId(groupId))
-            ownerId != null -> projectRepository.findByOwnerId(rootId, ObjectId(ownerId))
-            memberId != null -> projectRepository.findByMemberId(rootId, ObjectId(memberId))
-            status != null -> projectRepository.findByStatus(rootId, status)
-            else -> projectRepository.findByRootOrgId(rootId)
+        val pageSize = limit.coerceIn(1, 100)
+        val cursorId = cursor?.let { runCatching { ObjectId(it) }.getOrNull() }
+
+        val docs = when {
+            groupId != null || ownerId != null || memberId != null || status != null -> {
+                // Filtered queries fall back to non-cursor (complex filters)
+                when {
+                    groupId != null -> projectRepository.findByGroupId(rootId, ObjectId(groupId))
+                    ownerId != null -> projectRepository.findByOwnerId(rootId, ObjectId(ownerId))
+                    memberId != null -> projectRepository.findByMemberId(rootId, ObjectId(memberId))
+                    else -> projectRepository.findByStatus(rootId, status!!)
+                }
+            }
+            else -> projectRepository.findWithCursor(rootId, cursorId, pageSize + 1)
         }
-        return projects.map { ProjectMapper.toDomain(it) }
+
+        val hasMore = docs.size > pageSize
+        val items = if (hasMore) docs.dropLast(1) else docs
+        val nextCursor = if (hasMore) items.lastOrNull()?.id?.toHexString() else null
+
+        return items.map { ProjectMapper.toDomain(it) } to PageInfo(nextCursor, hasMore)
     }
 
     fun getProject(projectId: String, rootOrgId: String): Project {
@@ -67,7 +95,7 @@ class ProjectService(
     ): Project {
         val rootId = ObjectId(rootOrgId)
 
-        val orgDoc = orgRepository.findByIdAndNotDeleted(ObjectId(organizationId))
+        val orgDoc = orgRepository.findByIdAndRootOrg(ObjectId(organizationId), rootId)
             ?: throw NotFoundException("Organization not found: $organizationId")
         if (!orgDoc.isLeaf) {
             throw ValidationException("Organization must be a leaf type to contain projects", "org_not_leaf")

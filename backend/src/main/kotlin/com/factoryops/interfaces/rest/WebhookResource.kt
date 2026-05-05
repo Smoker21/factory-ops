@@ -4,6 +4,7 @@ import com.factoryops.interfaces.filter.RequestContext
 import com.factoryops.persistence.document.WebhookDocument
 import com.factoryops.persistence.repository.WebhookDeadLetterRepository
 import com.factoryops.persistence.repository.WebhookRepository
+import jakarta.annotation.security.RolesAllowed
 import jakarta.inject.Inject
 import jakarta.validation.Valid
 import jakarta.validation.constraints.NotBlank
@@ -44,7 +45,10 @@ class WebhookResource {
     lateinit var requestContext: RequestContext
 
     @GET
+    @RolesAllowed("ORG_ADMIN", "ADMIN")
     @Operation(summary = "List registered webhooks")
+    @APIResponse(responseCode = "200", description = "Webhook list")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun list(): Response {
         val rootOrgId = requestContext.requireRootOrgId()
         val webhooks = webhookRepository.findByRootOrgId(ObjectId(rootOrgId))
@@ -52,8 +56,10 @@ class WebhookResource {
     }
 
     @POST
+    @RolesAllowed("ORG_ADMIN", "ADMIN")
     @Operation(summary = "Register webhook")
     @APIResponse(responseCode = "201", description = "Webhook registered")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun create(@Valid request: CreateWebhookRequest): Response {
         val rootOrgId = requestContext.requireRootOrgId()
         val now = Instant.now()
@@ -72,7 +78,10 @@ class WebhookResource {
 
     @DELETE
     @Path("/{webhookId}")
+    @RolesAllowed("ORG_ADMIN", "ADMIN")
     @Operation(summary = "Remove webhook")
+    @APIResponse(responseCode = "204", description = "Removed")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun delete(@PathParam("webhookId") webhookId: String): Response {
         val rootOrgId = requestContext.requireRootOrgId()
         val doc = webhookRepository.findById(ObjectId(webhookId))

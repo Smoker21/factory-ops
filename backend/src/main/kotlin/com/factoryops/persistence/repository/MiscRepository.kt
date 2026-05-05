@@ -2,6 +2,7 @@ package com.factoryops.persistence.repository
 
 import com.factoryops.persistence.document.AttachmentDocument
 import com.factoryops.persistence.document.EventOutboxDocument
+import com.factoryops.persistence.document.RevokedTokenDocument
 import com.factoryops.persistence.document.WebhookDeadLetterDocument
 import com.factoryops.persistence.document.WebhookDocument
 import io.quarkus.mongodb.panache.kotlin.PanacheMongoRepository
@@ -41,4 +42,20 @@ class EventOutboxRepository : PanacheMongoRepository<EventOutboxDocument> {
         find(Document("processedAt", null).append("scheduledAt", Document("\$lte", Instant.now())))
             .page(0, limit)
             .list()
+}
+
+@ApplicationScoped
+class RevokedTokenRepository : PanacheMongoRepository<RevokedTokenDocument> {
+
+    fun isRevoked(jti: String): Boolean =
+        find("jti = ?1", jti).firstResult() != null
+
+    fun revoke(jti: String, expiresAt: Instant) {
+        val doc = RevokedTokenDocument().also { d ->
+            d.jti = jti
+            d.revokedAt = Instant.now()
+            d.expiresAt = expiresAt
+        }
+        persist(doc)
+    }
 }

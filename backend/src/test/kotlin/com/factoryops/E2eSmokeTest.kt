@@ -4,7 +4,6 @@ import io.quarkus.test.junit.QuarkusTest
 import io.restassured.RestAssured.given
 import io.restassured.http.ContentType
 import org.hamcrest.CoreMatchers.equalTo
-import org.hamcrest.CoreMatchers.notNullValue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestMethodOrder
 import org.junit.jupiter.api.MethodOrderer
@@ -50,6 +49,7 @@ class E2eSmokeTest {
 
     @Test
     fun `login with blank fields returns 422`() {
+        // Bean validation fires before MongoDB query — works without Docker
         given()
             .contentType(ContentType.JSON)
             .body("""{"accountName":"","password":""}""")

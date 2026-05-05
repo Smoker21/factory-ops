@@ -2798,7 +2798,7 @@ components:
         descriptionMarkdown: { type: string }
         defaultMemberRoles:
           type: object
-          description: 角色配置(例 `{ ENGINEER: 1, OPERATOR: 2 }`)
+          description: "角色配置(例 { ENGINEER: 1, OPERATOR: 2 })"
           additionalProperties:
             type: integer
             minimum: 0

@@ -1,5 +1,6 @@
 package com.factoryops.application.service
 
+import com.factoryops.interfaces.exception.BusinessRuleViolationException
 import com.factoryops.interfaces.exception.ConflictException
 import com.factoryops.interfaces.exception.NotFoundException
 import com.factoryops.interfaces.exception.ValidationException
@@ -9,13 +10,19 @@ import com.factoryops.persistence.document.TaskTemplateDocument
 import com.factoryops.persistence.repository.ProjectTemplateRepository
 import com.factoryops.persistence.repository.TaskTemplateRepository
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.transaction.Transactional
 import mu.KotlinLogging
 import org.bson.types.ObjectId
 import java.time.Instant
 
 private val logger = KotlinLogging.logger {}
 
+/**
+ * NOTE: @Transactional is applied at class level. MongoDB transactions require a replica set.
+ * In dev/standalone mode Quarkus degrades to best-effort (no atomicity guarantee).
+ */
 @ApplicationScoped
+@Transactional
 class TemplateService(
     private val projectTemplateRepository: ProjectTemplateRepository,
     private val taskTemplateRepository: TaskTemplateRepository
@@ -59,12 +66,19 @@ class TemplateService(
         return doc.toMap()
     }
 
+    @Transactional
     fun updateProjectTemplate(id: String, body: Map<String, Any?>): Map<String, Any?> {
         val doc = projectTemplateRepository.findByIdNotDeleted(ObjectId(id))
             ?: throw NotFoundException("ProjectTemplate not found: $id")
+        if (!doc.active) {
+            throw BusinessRuleViolationException("Cannot update inactive template", "cannot_update_inactive_template")
+        }
         (body["name"] as? String)?.let { doc.name = it }
+        (body["descriptionMarkdown"] as? String)?.let { doc.descriptionMarkdown = it }
+        doc.version = doc.version + 1
         doc.updatedAt = Instant.now()
         projectTemplateRepository.update(doc)
+        logger.debug { "Updated ProjectTemplate [${doc.id}] to version=${doc.version}" }
         return doc.toMap()
     }
 
@@ -146,12 +160,19 @@ class TemplateService(
         return doc.toMap()
     }
 
+    @Transactional
     fun updateTaskTemplate(id: String, body: Map<String, Any?>): Map<String, Any?> {
         val doc = taskTemplateRepository.findByIdNotDeleted(ObjectId(id))
             ?: throw NotFoundException("TaskTemplate not found: $id")
+        if (!doc.active) {
+            throw BusinessRuleViolationException("Cannot update inactive template", "cannot_update_inactive_template")
+        }
         (body["name"] as? String)?.let { doc.name = it }
+        (body["defaultPriority"] as? String)?.let { doc.defaultPriority = it }
+        doc.version = doc.version + 1
         doc.updatedAt = Instant.now()
         taskTemplateRepository.update(doc)
+        logger.debug { "Updated TaskTemplate [${doc.id}] to version=${doc.version}" }
         return doc.toMap()
     }
 

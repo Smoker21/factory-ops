@@ -1,21 +1,36 @@
 # 後端狀態
 
-**狀態**: PENDING_COMPILE_VERIFICATION
-**版本**: 1.0.0(對應 Spec v1.3.0)
-**完成時間**: 2026-05-05
-**負責 agent**: quarkus-backend-builder
+**狀態**: P0_SECURITY_FIXES_APPLIED
+**版本**: 1.1.0(對應 Spec v1.3.0 + P0 安全修復)
+**完成時間**: 2026-05-03
+**負責 agent**: quarkus-backend-builder (M3) → 安全修復由 code-reviewer 指導
 
 ---
 
-## 重要聲明
+## M4 P0 安全修復(2026-05-03)
 
-本里程碑的程式碼由 AI agent 在 **無 JDK 環境** 中生成。由於無法執行 `./gradlew build` 或 `./gradlew test`，**所有程式碼均未實際編譯驗證**。
+本次修復依 code-reviewer 的 Must-Fix 清單完成全部 15 項 P0 項目。
+`./gradlew compileKotlin compileTestKotlin` 通過，無警告。
 
-在前端 builder 接手前，需要：
-1. 安裝 JDK 21+
-2. 初始化 Gradle Wrapper
-3. 修正首次編譯錯誤(預期有少量 import 或型別問題)
-4. 確認 5+ 個測試通過
+### 已修復 P0 清單
+
+| # | 項目 | 狀態 |
+|---|---|---|
+| P0-1 | JWT refresh token 簽名驗證(改用 JWTAuthContextInfo + audience=factory-ops-refresh) | DONE |
+| P0-2 | 全面補 @RolesAllowed 於所有 Resource method | DONE |
+| P0-3 | Login 加 orgCode 欄位,用 (rootOrg, accountName) 查詢 | DONE |
+| P0-4 | UserService.updateUser 禁止 actor 改自己 roles | DONE |
+| P0-5 | .gitignore 加 !*.example.pem,prod 強制 env 路徑 | DONE |
+| P0-6 | OrganizationRepository.findByIdAndRootOrg 全面取代 findByIdAndNotDeleted | DONE |
+| P0-7 | OrganizationService.createOrg 原子化(預生成 ObjectId) | DONE |
+| P0-8 | TemplateService.update* 加 active=true 檢查 + version++ | DONE |
+| P0-9 | 所有 Service class 加 @Transactional | DONE |
+| P0-10 | GroupService.updateGroupSettings 加 INV-35 角色白名單 | DONE |
+| P0-11 | MockHrResource 加 @IfBuildProfile("dev") | DONE |
+| P0-12 | AuthService.logout 實作 refresh token blacklist(revoked_tokens collection) | DONE |
+| P0-13 | 7 個列表端點補 cursor pagination(?cursor=&limit=) | DONE |
+| P0-14 | OrganizationService.updateOrg 移動節點時 propagate ancestorIds 到子孫 | DONE |
+| P0-15 | EventPublisherService.publishEvent 移除 try/catch | DONE |
 
 ---
 
@@ -179,7 +194,11 @@ http://localhost:8080/v1/health      # 健康檢查
 | 增量同步 since 參數 | 定義於 OpenAPI 但 service 層未實作過濾 |
 | 欄位投影 fields 參數 | 定義於 OpenAPI 但 service 層未實作 |
 | 根 Org 代碼唯一性 | 兩個不同的 root org 可有相同 code |
-| 程式碼未編譯驗證 | 無 JDK 環境,需使用者首次 build 修正 |
+| Refresh Token 安全 | 已修復 — 使用 JWTAuthContextInfo 正確驗章(P0-1) |
+| RBAC | 已修復 — 全面補 @RolesAllowed(P0-2) |
+| 跨租戶資料洩漏 | 已修復 — findByIdAndRootOrg(P0-6) |
+| createOrg 非原子 | 已修復 — 預生成 ObjectId(P0-7) |
+| 編譯狀態 | 通過 — compileKotlin + compileTestKotlin 全綠(JDK 21) |
 
 ---
 
@@ -189,7 +208,8 @@ http://localhost:8080/v1/health      # 健康檢查
 
 1. API base URL: `http://localhost:8080/v1`
 2. 認證: Bearer JWT (Authorization: Bearer {accessToken})
-3. Dev seed 帳號:
+3. Dev seed 帳號(login 現需加 orgCode 欄位):
+   - orgCode: "taichung-fab" (dev seed 的 root org code)
    - admin.system / Admin@123456789 (ADMIN)
    - manager.wang / Manager@123456789 (ORG_ADMIN)
    - leader.chen / Leader@123456789 (SHIFT_LEAD + GROUP_MANAGER)

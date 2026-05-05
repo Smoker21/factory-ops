@@ -25,13 +25,19 @@ import com.factoryops.persistence.repository.TaskRepository
 import com.factoryops.persistence.repository.UserRepository
 import com.github.f4b6a3.ulid.UlidCreator
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.transaction.Transactional
 import mu.KotlinLogging
 import org.bson.types.ObjectId
 import java.time.Instant
 
 private val logger = KotlinLogging.logger {}
 
+/**
+ * NOTE: @Transactional is applied at class level. MongoDB transactions require a replica set.
+ * In dev/standalone mode Quarkus degrades to best-effort (no atomicity guarantee).
+ */
 @ApplicationScoped
+@Transactional
 class TaskService(
     private val taskRepository: TaskRepository,
     private val projectRepository: ProjectRepository,
@@ -40,17 +46,37 @@ class TaskService(
     private val eventPublisherService: EventPublisherService
 ) {
 
-    fun listTasks(rootOrgId: String, projectId: String?, status: String?, ownerId: String?, assigneeId: String?, type: String?): List<Task> {
+    fun listTasks(
+        rootOrgId: String,
+        projectId: String?,
+        status: String?,
+        ownerId: String?,
+        assigneeId: String?,
+        type: String?,
+        cursor: String? = null,
+        limit: Int = 20
+    ): Pair<List<Task>, com.factoryops.interfaces.dto.PageInfo> {
         val rootId = ObjectId(rootOrgId)
-        return when {
-            projectId != null -> taskRepository.findByProjectId(rootId, ObjectId(projectId))
-            ownerId != null -> taskRepository.findByOwnerId(rootId, ObjectId(ownerId))
-            assigneeId != null -> taskRepository.findByAssigneeId(rootId, ObjectId(assigneeId))
-            status != null -> taskRepository.findByStatus(rootId, status)
-            else -> taskRepository.findByRootOrgId(rootId)
+        val pageSize = limit.coerceIn(1, 100)
+        val cursorId = cursor?.let { runCatching { ObjectId(it) }.getOrNull() }
+
+        val docs = when {
+            projectId != null || ownerId != null || assigneeId != null || status != null || type != null -> {
+                when {
+                    projectId != null -> taskRepository.findByProjectId(rootId, ObjectId(projectId))
+                    ownerId != null -> taskRepository.findByOwnerId(rootId, ObjectId(ownerId))
+                    assigneeId != null -> taskRepository.findByAssigneeId(rootId, ObjectId(assigneeId))
+                    else -> taskRepository.findByStatus(rootId, status!!)
+                }.filter { type == null || it.type == type }
+            }
+            else -> taskRepository.findWithCursor(rootId, cursorId, pageSize + 1)
         }
-            .filter { type == null || it.type == type }
-            .map { TaskMapper.toDomain(it) }
+
+        val hasMore = docs.size > pageSize
+        val items = if (hasMore) docs.dropLast(1) else docs
+        val nextCursor = if (hasMore) items.lastOrNull()?.id?.toHexString() else null
+
+        return items.map { TaskMapper.toDomain(it) } to com.factoryops.interfaces.dto.PageInfo(nextCursor, hasMore)
     }
 
     fun getTask(taskId: String, rootOrgId: String): Task {

@@ -12,8 +12,6 @@ class AuthResourceTest {
 
     @Test
     fun `login with valid seed credentials returns token pair`() {
-        // This test depends on seed data; will pass if seed data is enabled
-        // In test mode, seed data is enabled via quarkus test profile
         given()
             .contentType(ContentType.JSON)
             .body("""{"accountName":"admin.system","password":"Admin@123456789"}""")
@@ -36,10 +34,22 @@ class AuthResourceTest {
     }
 
     @Test
-    fun `login with blank accountName returns 422`() {
+    fun `login with blank orgCode returns 422`() {
+        // Bean validation (no MongoDB needed) — orgCode is now required
         given()
             .contentType(ContentType.JSON)
-            .body("""{"accountName":"","password":"anypassword"}""")
+            .body("""{"orgCode":"","accountName":"admin.system","password":"anypassword"}""")
+            .`when`().post("/v1/auth/login")
+            .then()
+            .statusCode(422)
+    }
+
+    @Test
+    fun `login with missing orgCode returns 422`() {
+        // Bean validation — orgCode field absent defaults to blank
+        given()
+            .contentType(ContentType.JSON)
+            .body("""{"accountName":"admin.system","password":"anypassword"}""")
             .`when`().post("/v1/auth/login")
             .then()
             .statusCode(422)
@@ -57,6 +67,7 @@ class AuthResourceTest {
 
     @Test
     fun `protected endpoint without token returns 401`() {
+        // JWT validation (no MongoDB needed for this check)
         given()
             .`when`().get("/v1/orgs")
             .then()

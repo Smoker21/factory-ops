@@ -1,12 +1,16 @@
 package com.factoryops.application.auth
 
 import com.factoryops.domain.user.User
+import com.factoryops.interfaces.exception.UnauthorizedException
+import io.smallrye.jwt.auth.principal.JWTAuthContextInfo
+import io.smallrye.jwt.auth.principal.JWTParser
 import io.smallrye.jwt.build.Jwt
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.inject.Inject
 import mu.KotlinLogging
 import org.eclipse.microprofile.config.inject.ConfigProperty
-import org.jose4j.jwt.consumer.JwtConsumerBuilder
 import java.time.Instant
+import java.util.UUID
 
 private val logger = KotlinLogging.logger {}
 
@@ -20,10 +24,10 @@ data class TokenPair(
 /**
  * Issues JWT access and refresh tokens for authenticated users.
  * Access token claims: userId, accountName, rootOrgId, orgPath[], groups(roles[]), groupIds[], orgManagerScopes[]
- * Refresh token claims: userId, rootOrgId, tokenType=refresh
+ * Refresh token claims: userId, rootOrgId, tokenType=refresh, jti
  *
  * NOTE: JWT private/public keys in src/main/resources/jwt/ are DEV ONLY.
- * Replace with real keys in production via JWT_PRIVATE_KEY_LOCATION / JWT_PUBLIC_KEY_LOCATION env vars.
+ * In production, supply JWT_PRIVATE_KEY_PATH / JWT_PUBLIC_KEY_PATH environment variables.
  */
 @ApplicationScoped
 class JwtIssuerService {
@@ -36,6 +40,12 @@ class JwtIssuerService {
 
     @ConfigProperty(name = "factory.ops.jwt.refresh.expiry.seconds", defaultValue = "604800")
     var refreshExpirySeconds: Long = 604800L
+
+    @ConfigProperty(name = "mp.jwt.verify.publickey.location", defaultValue = "jwt/publicKey.pem")
+    lateinit var publicKeyLocation: String
+
+    @Inject
+    lateinit var jwtParser: JWTParser
 
     fun issueTokenPair(user: User): TokenPair {
         val now = Instant.now()
@@ -59,7 +69,7 @@ class JwtIssuerService {
             .upn(user.accountName)
             .issuedAt(now)
             .expiresAt(now.plusSeconds(accessExpirySeconds))
-            .audience("factory-ops-api")
+            .audience("factory-ops-access")
             .claim("userId", user.id ?: "")
             .claim("accountName", user.accountName)
             .claim("rootOrgId", user.rootOrgId)
@@ -71,39 +81,55 @@ class JwtIssuerService {
     }
 
     private fun buildRefreshToken(user: User, now: Instant): String {
+        val jti = UUID.randomUUID().toString()
         return Jwt.issuer(issuer)
             .subject(user.id ?: "")
             .upn(user.accountName)
             .issuedAt(now)
             .expiresAt(now.plusSeconds(refreshExpirySeconds))
             .audience("factory-ops-refresh")
+            .claim("jti", jti)
             .claim("userId", user.id ?: "")
             .claim("rootOrgId", user.rootOrgId)
             .claim("tokenType", "refresh")
             .sign()
     }
 
+    data class RefreshTokenClaims(val userId: String, val jti: String, val expiresAt: Instant)
+
     /**
-     * Parses a refresh token and extracts the userId (no signature verification in dev mode).
-     * In production, signature must be verified via SmallRye JWT.
+     * Parses and validates a refresh token using the configured public key.
+     * Uses a refresh-specific JWTAuthContextInfo so audience=factory-ops-refresh is enforced
+     * independently of the global mp.jwt.verify.audiences=factory-ops-access config.
+     * Enforces: issuer, audience=factory-ops-refresh, expiry, tokenType=refresh.
      */
-    fun extractUserIdFromRefreshToken(token: String): String? {
-        return try {
-            val consumer = JwtConsumerBuilder()
-                .setSkipAllValidators()
-                .setDisableRequireSignature()
-                .setSkipSignatureVerification()
-                .build()
-            val claims = consumer.processToClaims(token)
-            val tokenType = claims.getClaimValue("tokenType") as? String
-            if (tokenType == "refresh") {
-                claims.getClaimValue("userId") as? String
-            } else {
-                null
-            }
-        } catch (ex: Exception) {
-            logger.debug { "Could not parse refresh token: ${ex.message}" }
-            null
+    fun extractRefreshTokenClaims(token: String): RefreshTokenClaims {
+        val refreshCtx = JWTAuthContextInfo().also { info ->
+            info.publicKeyLocation = publicKeyLocation
+            info.issuedBy = issuer
+            info.expectedAudience = setOf("factory-ops-refresh")
         }
+
+        val jwt = try {
+            jwtParser.parse(token, refreshCtx)
+        } catch (ex: Exception) {
+            logger.debug { "Refresh token parse/verify failed: ${ex.message}" }
+            throw UnauthorizedException("Invalid or expired refresh token", "invalid_refresh_token")
+        }
+
+        val tokenType = jwt.getClaim<String>("tokenType")
+        if (tokenType != "refresh") {
+            throw UnauthorizedException("Token type is not refresh", "invalid_refresh_token")
+        }
+
+        val userId = jwt.getClaim<String>("userId")
+            ?: throw UnauthorizedException("Refresh token missing userId claim", "invalid_refresh_token")
+
+        val jti = jwt.tokenID
+            ?: throw UnauthorizedException("Refresh token missing jti claim", "invalid_refresh_token")
+
+        val expiresAt = Instant.ofEpochSecond(jwt.expirationTime)
+
+        return RefreshTokenClaims(userId = userId, jti = jti, expiresAt = expiresAt)
     }
 }

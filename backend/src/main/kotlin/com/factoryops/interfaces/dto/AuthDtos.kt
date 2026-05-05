@@ -4,11 +4,16 @@ import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Size
 
 data class LoginRequest(
+    @field:NotBlank(message = "orgCode is required")
+    @field:Size(max = 64, message = "orgCode must be at most 64 characters")
+    val orgCode: String = "",
+
     @field:NotBlank(message = "accountName is required")
     @field:Size(max = 30, message = "accountName must be at most 30 characters")
     val accountName: String = "",
 
     @field:NotBlank(message = "password is required")
+    @field:Size(max = 128, message = "password must be at most 128 characters")
     val password: String = ""
 )
 

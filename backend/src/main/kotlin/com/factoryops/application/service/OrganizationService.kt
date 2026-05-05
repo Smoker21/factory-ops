@@ -3,50 +3,77 @@ package com.factoryops.application.service
 import com.factoryops.domain.organization.OrgSettings
 import com.factoryops.domain.organization.Organization
 import com.factoryops.domain.shared.AuditEntry
+import com.factoryops.interfaces.dto.PageInfo
 import com.factoryops.interfaces.exception.BusinessRuleViolationException
 import com.factoryops.interfaces.exception.ConflictException
 import com.factoryops.interfaces.exception.NotFoundException
 import com.factoryops.interfaces.exception.ValidationException
+import com.factoryops.persistence.document.OrgSettingsDocument
 import com.factoryops.persistence.mapper.OrganizationMapper
 import com.factoryops.persistence.mapper.UserMapper
 import com.factoryops.persistence.repository.OrganizationRepository
 import com.factoryops.persistence.repository.UserRepository
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.transaction.Transactional
 import mu.KotlinLogging
 import org.bson.types.ObjectId
 import java.time.Instant
 
 private val logger = KotlinLogging.logger {}
 
+/**
+ * Service for organization tree management.
+ * NOTE: @Transactional is applied on public methods. MongoDB transactions require a replica set.
+ * In dev/standalone mode Quarkus degrades to best-effort (no atomicity guarantee).
+ */
 @ApplicationScoped
 class OrganizationService(
     private val orgRepository: OrganizationRepository,
     private val userRepository: UserRepository
 ) {
 
-    fun listOrgs(rootOrgId: String, parentId: String?, type: String?, leafOnly: Boolean, underOrgId: String?): List<Organization> {
+    @Transactional
+    fun listOrgs(
+        rootOrgId: String,
+        parentId: String?,
+        type: String?,
+        leafOnly: Boolean,
+        underOrgId: String?,
+        cursor: String? = null,
+        limit: Int = 50
+    ): Pair<List<Organization>, PageInfo> {
         val rootId = ObjectId(rootOrgId)
-        return when {
+        val pageSize = limit.coerceIn(1, 200)
+        val cursorId = cursor?.let { runCatching { ObjectId(it) }.getOrNull() }
+
+        val docs = when {
             underOrgId != null -> {
                 val nodeId = ObjectId(underOrgId)
-                val self = orgRepository.findByIdAndNotDeleted(nodeId)
+                val self = orgRepository.findByIdAndRootOrg(nodeId, rootId)
                 val descendants = orgRepository.findDescendants(nodeId)
                 listOfNotNull(self) + descendants
             }
             parentId != null -> orgRepository.findByParentId(rootId, ObjectId(parentId))
-            else -> orgRepository.findByRootOrgId(rootId)
-        }
-            .filter { type == null || it.type == type }
+            type != null || leafOnly -> orgRepository.findByRootOrgId(rootId)
+            else -> orgRepository.findWithCursor(rootId, cursorId, pageSize + 1)
+        }.filter { type == null || it.type == type }
             .filter { !leafOnly || it.isLeaf }
-            .map { OrganizationMapper.toDomain(it) }
+
+        val hasMore = (parentId == null && underOrgId == null) && docs.size > pageSize
+        val items = if (hasMore) docs.dropLast(1) else docs
+        val nextCursor = if (hasMore) items.lastOrNull()?.id?.toHexString() else null
+
+        return items.map { OrganizationMapper.toDomain(it) } to PageInfo(nextCursor, hasMore)
     }
 
+    @Transactional
     fun getOrg(id: String, rootOrgId: String): Organization {
-        val doc = orgRepository.findByIdAndNotDeleted(ObjectId(id))
+        val doc = orgRepository.findByIdAndRootOrg(ObjectId(id), ObjectId(rootOrgId))
             ?: throw NotFoundException("Organization not found: $id")
         return OrganizationMapper.toDomain(doc)
     }
 
+    @Transactional
     fun createOrg(
         type: String,
         name: String,
@@ -60,12 +87,14 @@ class OrganizationService(
         actorId: String,
         actorRootOrgId: String?
     ): Organization {
-        // Validate code uniqueness
+        // Validate code uniqueness within root org
         val rootId = if (parentId == null) {
-            null // will be assigned after creation
+            null // root being created — code uniqueness across root orgs is not enforced (root codes can match)
         } else {
-            val parent = orgRepository.findByIdAndNotDeleted(ObjectId(parentId))
-                ?: throw NotFoundException("Parent organization not found: $parentId")
+            val parent = orgRepository.findByIdAndRootOrg(
+                ObjectId(parentId),
+                actorRootOrgId?.let { ObjectId(it) } ?: throw ValidationException("actorRootOrgId required for non-root org creation")
+            ) ?: throw NotFoundException("Parent organization not found: $parentId")
             parent.rootOrgId
         }
 
@@ -77,8 +106,10 @@ class OrganizationService(
         }
 
         val parentDoc = parentId?.let {
-            orgRepository.findByIdAndNotDeleted(ObjectId(it))
-                ?: throw NotFoundException("Parent organization not found: $parentId")
+            orgRepository.findByIdAndRootOrg(
+                ObjectId(it),
+                rootId ?: throw ValidationException("rootId must be resolved before lookup")
+            ) ?: throw NotFoundException("Parent organization not found: $parentId")
         }
 
         val depth = (parentDoc?.depth ?: -1) + 1
@@ -88,12 +119,18 @@ class OrganizationService(
             parentDoc.ancestorIds.map { it.toHexString() } + parentDoc.id!!.toHexString()
         }
 
-        // Determine rootOrgId - for root nodes we'll use a temporary ObjectId and update after insert
-        val tempRootOrgId = parentDoc?.rootOrgId?.toHexString() ?: ObjectId().toHexString()
+        // Pre-generate the ObjectId so we can set rootOrgId atomically in a single persist
+        val newId = ObjectId()
+        val resolvedRootOrgId = if (parentDoc == null) {
+            // Root node: rootOrgId == self id
+            newId
+        } else {
+            parentDoc.rootOrgId
+        }
 
         // Compute isLeaf
         val rootSettings = if (parentDoc == null) settings else {
-            val rootDoc = orgRepository.findRoot(parentDoc.rootOrgId)
+            val rootDoc = orgRepository.findRoot(resolvedRootOrgId)
             rootDoc?.settings?.let {
                 OrgSettings(it.orgMaxDepth, it.leafTypes, it.attachmentMaxBytes, it.extras)
             }
@@ -111,7 +148,8 @@ class OrganizationService(
         val historyEntry = AuditEntry(actorId = actorId, action = "ORG_CREATED", at = now)
 
         val newOrg = Organization(
-            rootOrgId = tempRootOrgId,
+            id = newId.toHexString(),
+            rootOrgId = resolvedRootOrgId.toHexString(),
             parentId = parentId,
             type = type,
             name = name,
@@ -132,16 +170,11 @@ class OrganizationService(
         val doc = OrganizationMapper.toDocument(newOrg)
         orgRepository.persist(doc)
 
-        // For root nodes, update rootOrgId to be self
-        if (parentId == null) {
-            doc.rootOrgId = doc.id!!
-            orgRepository.update(doc)
-        }
-
         logger.info { "Created organization [${doc.id}] name=$name type=$type" }
         return OrganizationMapper.toDomain(doc)
     }
 
+    @Transactional
     fun updateOrg(
         id: String,
         rootOrgId: String,
@@ -153,7 +186,8 @@ class OrganizationService(
         settings: OrgSettings?,
         actorId: String
     ): Organization {
-        val doc = orgRepository.findByIdAndNotDeleted(ObjectId(id))
+        val rootId = ObjectId(rootOrgId)
+        val doc = orgRepository.findByIdAndRootOrg(ObjectId(id), rootId)
             ?: throw NotFoundException("Organization not found: $id")
 
         val now = Instant.now()
@@ -167,7 +201,7 @@ class OrganizationService(
         locale?.let { doc.locale = it }
         settings?.let { s ->
             if (doc.parentId == null) {
-                doc.settings = com.factoryops.persistence.document.OrgSettingsDocument().also { d ->
+                doc.settings = OrgSettingsDocument().also { d ->
                     d.orgMaxDepth = s.orgMaxDepth
                     d.leafTypes = s.leafTypes
                     d.attachmentMaxBytes = s.attachmentMaxBytes
@@ -177,15 +211,23 @@ class OrganizationService(
         }
 
         if (newParentId != null && newParentId != doc.parentId?.toHexString()) {
-            val newParent = orgRepository.findByIdAndNotDeleted(ObjectId(newParentId))
+            val newParent = orgRepository.findByIdAndRootOrg(ObjectId(newParentId), rootId)
                 ?: throw NotFoundException("New parent not found: $newParentId")
             // Cycle check: newParent must not be in subtree of this node
             if (newParent.ancestorIds.any { it == doc.id } || newParent.id == doc.id) {
                 throw ConflictException("Cannot move node to its own descendant (cycle)", "cycle_detected")
             }
+
+            val oldAncestorIds = doc.ancestorIds.toList()
+            val newAncestorIds = newParent.ancestorIds + newParent.id!!
+            val newDepth = newParent.depth + 1
+
             doc.parentId = ObjectId(newParentId)
-            doc.ancestorIds = newParent.ancestorIds + newParent.id!!
-            doc.depth = newParent.depth + 1
+            doc.ancestorIds = newAncestorIds
+            doc.depth = newDepth
+
+            // Propagate ancestorIds update to all descendants (P0-14)
+            propagateAncestorIdsToDescendants(doc.id!!, oldAncestorIds, newAncestorIds, newDepth)
         }
 
         doc.history = doc.history + historyEntry
@@ -195,8 +237,37 @@ class OrganizationService(
         return OrganizationMapper.toDomain(doc)
     }
 
+    /**
+     * Propagates ancestorIds and depth changes to all descendants of a moved node.
+     * Uses bulk update to replace the old ancestor prefix with the new one for each descendant.
+     */
+    private fun propagateAncestorIdsToDescendants(
+        movedNodeId: ObjectId,
+        oldAncestorIds: List<ObjectId>,
+        newAncestorIds: List<ObjectId>,
+        newParentDepth: Int
+    ) {
+        val descendants = orgRepository.findDescendants(movedNodeId)
+        for (descendant in descendants) {
+            val oldPrefix = oldAncestorIds + movedNodeId
+            val newPrefix = newAncestorIds + movedNodeId
+            val oldAncestors = descendant.ancestorIds
+            val newAncestors = if (oldAncestors.size >= oldPrefix.size) {
+                newPrefix + oldAncestors.drop(oldPrefix.size)
+            } else {
+                newPrefix
+            }
+            val depthDelta = newAncestors.size - oldAncestors.size
+            descendant.ancestorIds = newAncestors
+            descendant.depth = descendant.depth + depthDelta
+            descendant.updatedAt = Instant.now()
+            orgRepository.update(descendant)
+        }
+    }
+
+    @Transactional
     fun deleteOrg(id: String, rootOrgId: String, actorId: String) {
-        val doc = orgRepository.findByIdAndNotDeleted(ObjectId(id))
+        val doc = orgRepository.findByIdAndRootOrg(ObjectId(id), ObjectId(rootOrgId))
             ?: throw NotFoundException("Organization not found: $id")
 
         val childCount = orgRepository.countChildren(doc.id!!)
@@ -212,15 +283,16 @@ class OrganizationService(
         logger.info { "Soft-deleted organization [$id]" }
     }
 
+    @Transactional
     fun transferManager(id: String, rootOrgId: String, newManagerId: String?, actorId: String): Organization {
-        val doc = orgRepository.findByIdAndNotDeleted(ObjectId(id))
+        val doc = orgRepository.findByIdAndRootOrg(ObjectId(id), ObjectId(rootOrgId))
             ?: throw NotFoundException("Organization not found: $id")
 
         val now = Instant.now()
         val oldManagerId = doc.managerId?.toHexString()
 
         if (newManagerId != null) {
-            val managerDoc = userRepository.findById(ObjectId(newManagerId))
+            val managerDoc = userRepository.findByIdAndNotDeleted(ObjectId(newManagerId), doc.rootOrgId)
                 ?: throw NotFoundException("User not found: $newManagerId")
             if (!managerDoc.active) {
                 throw ValidationException("Manager user is not active", "user_not_active")
@@ -247,34 +319,29 @@ class OrganizationService(
     }
 
     private fun updateOrgManagerScopes(userId: String, orgId: String, remove: Boolean) {
-        try {
-            val userDoc = userRepository.findById(ObjectId(userId)) ?: return
-            val scopeId = ObjectId(orgId)
-            if (remove) {
-                userDoc.orgManagerScopes = userDoc.orgManagerScopes.filter { it != scopeId }
-            } else {
-                if (!userDoc.orgManagerScopes.contains(scopeId)) {
-                    userDoc.orgManagerScopes = userDoc.orgManagerScopes + scopeId
-                }
+        val userDoc = userRepository.findById(ObjectId(userId)) ?: return
+        val scopeId = ObjectId(orgId)
+        if (remove) {
+            userDoc.orgManagerScopes = userDoc.orgManagerScopes.filter { it != scopeId }
+        } else {
+            if (!userDoc.orgManagerScopes.contains(scopeId)) {
+                userDoc.orgManagerScopes = userDoc.orgManagerScopes + scopeId
             }
-            userRepository.update(userDoc)
-        } catch (ex: Exception) {
-            logger.warn { "Failed to update orgManagerScopes for user $userId: ${ex.message}" }
         }
+        userRepository.update(userDoc)
     }
 
+    @Transactional
     fun addLeader(id: String, rootOrgId: String, userId: String, actorId: String): Organization {
-        val doc = orgRepository.findByIdAndNotDeleted(ObjectId(id))
+        val rootId = ObjectId(rootOrgId)
+        val doc = orgRepository.findByIdAndRootOrg(ObjectId(id), rootId)
             ?: throw NotFoundException("Organization not found: $id")
 
-        val userDoc = userRepository.findById(ObjectId(userId))
+        val userDoc = userRepository.findByIdAndNotDeleted(ObjectId(userId), rootId)
             ?: throw NotFoundException("User not found: $userId")
 
         if (!userDoc.active) {
             throw ValidationException("User is not active", "user_not_active")
-        }
-        if (userDoc.rootOrgId.toHexString() != doc.rootOrgId.toHexString()) {
-            throw ValidationException("User does not belong to same root org", "different_root_org")
         }
 
         val leaderId = ObjectId(userId)
@@ -293,8 +360,9 @@ class OrganizationService(
         return OrganizationMapper.toDomain(doc)
     }
 
+    @Transactional
     fun removeLeader(id: String, rootOrgId: String, userId: String, actorId: String) {
-        val doc = orgRepository.findByIdAndNotDeleted(ObjectId(id))
+        val doc = orgRepository.findByIdAndRootOrg(ObjectId(id), ObjectId(rootOrgId))
             ?: throw NotFoundException("Organization not found: $id")
 
         val leaderId = ObjectId(userId)
@@ -311,12 +379,14 @@ class OrganizationService(
         orgRepository.update(doc)
     }
 
+    @Transactional
     fun getLeaders(id: String, rootOrgId: String): List<com.factoryops.domain.user.User> {
-        val doc = orgRepository.findByIdAndNotDeleted(ObjectId(id))
+        val rootId = ObjectId(rootOrgId)
+        val doc = orgRepository.findByIdAndRootOrg(ObjectId(id), rootId)
             ?: throw NotFoundException("Organization not found: $id")
 
         return doc.leaderIds.mapNotNull { leaderId ->
-            userRepository.findById(leaderId)?.let {
+            userRepository.findByIdAndNotDeleted(leaderId, rootId)?.let {
                 UserMapper.toDomain(it)
             }
         }

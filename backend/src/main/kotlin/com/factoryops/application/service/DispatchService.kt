@@ -20,13 +20,19 @@ import com.factoryops.persistence.repository.ActionRequestRepository
 import com.factoryops.persistence.repository.OrganizationRepository
 import com.factoryops.persistence.repository.UserRepository
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.transaction.Transactional
 import mu.KotlinLogging
 import org.bson.types.ObjectId
 import java.time.Instant
 
 private val logger = KotlinLogging.logger {}
 
+/**
+ * NOTE: @Transactional is applied at class level. MongoDB transactions require a replica set.
+ * In dev/standalone mode Quarkus degrades to best-effort (no atomicity guarantee).
+ */
 @ApplicationScoped
+@Transactional
 class DispatchService(
     private val actionRequestRepository: ActionRequestRepository,
     private val orgRepository: OrganizationRepository,
@@ -56,7 +62,7 @@ class DispatchService(
         val rootId = ObjectId(actorRootOrgId)
         val targetId = ObjectId(targetOrgId)
 
-        val targetOrg = orgRepository.findByIdAndNotDeleted(targetId)
+        val targetOrg = orgRepository.findByIdAndRootOrg(targetId, rootId)
             ?: throw NotFoundException("Target organization not found: $targetOrgId")
 
         // Validate target is leaf
@@ -115,13 +121,32 @@ class DispatchService(
         return ar
     }
 
-    fun listActionRequests(rootOrgId: String, status: String?, requesterId: String?): List<ActionRequest> {
+    fun listActionRequests(
+        rootOrgId: String,
+        status: String?,
+        requesterId: String?,
+        cursor: String? = null,
+        limit: Int = 20
+    ): Pair<List<ActionRequest>, com.factoryops.interfaces.dto.PageInfo> {
         val rootId = ObjectId(rootOrgId)
-        return when {
-            status != null -> actionRequestRepository.findByStatus(rootId, status)
-            else -> actionRequestRepository.findByRootOrgId(rootId)
-        }.filter { requesterId == null || it.requesterId.toHexString() == requesterId }
-            .map { ActionRequestMapper.toDomain(it) }
+        val pageSize = limit.coerceIn(1, 100)
+        val cursorId = cursor?.let { runCatching { ObjectId(it) }.getOrNull() }
+
+        val docs = when {
+            status != null || requesterId != null -> {
+                when {
+                    status != null -> actionRequestRepository.findByStatus(rootId, status)
+                    else -> actionRequestRepository.findByRootOrgId(rootId)
+                }.filter { requesterId == null || it.requesterId.toHexString() == requesterId }
+            }
+            else -> actionRequestRepository.findWithCursor(rootId, cursorId, pageSize + 1)
+        }
+
+        val hasMore = docs.size > pageSize
+        val items = if (hasMore) docs.dropLast(1) else docs
+        val nextCursor = if (hasMore) items.lastOrNull()?.id?.toHexString() else null
+
+        return items.map { ActionRequestMapper.toDomain(it) } to com.factoryops.interfaces.dto.PageInfo(nextCursor, hasMore)
     }
 
     fun getActionRequest(id: String, rootOrgId: String): ActionRequest {
@@ -143,7 +168,7 @@ class DispatchService(
     ): ActionRequest {
         val rootId = ObjectId(rootOrgId)
 
-        val targetOrg = orgRepository.findByIdAndNotDeleted(ObjectId(targetOrgId))
+        val targetOrg = orgRepository.findByIdAndRootOrg(ObjectId(targetOrgId), rootId)
             ?: throw NotFoundException("Target organization not found: $targetOrgId")
 
         if (!targetOrg.isLeaf) {

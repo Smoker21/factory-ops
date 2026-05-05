@@ -1,0 +1,39 @@
+# ======================================================
+# Factory Ops — Dev 覆寫
+# 用途：暴露額外 port、掛載 JWT dev keys、啟用 seed data
+#
+# 使用：docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# ======================================================
+
+services:
+
+  backend:
+    environment:
+      QUARKUS_PROFILE: dev
+      # Dev profile 覆寫：啟用 seed data 與 Swagger UI
+      FACTORY_OPS_SEED_ENABLED: "true"
+      SWAGGER_ENABLED: "true"
+      # Override JWT key paths via Quarkus env override syntax
+      # Uses *.example.pem (committed to repo) — fresh clone works without any setup
+      # WARNING: 這些 example keys 是公開的，僅供本機開發。Production 必須注入真實 RSA key。
+      MP_JWT_VERIFY_PUBLICKEY_LOCATION: /jwt/publicKey.example.pem
+      SMALLRYE_JWT_SIGN_KEY_LOCATION: /jwt/privateKey.example.pem
+    volumes:
+      # 掛載整個 jwt 目錄（包含 example.pem，fresh clone 即可運作）
+      - ./backend/src/main/resources/jwt:/jwt:ro
+    ports:
+      - "8080:8080"
+
+  mongo:
+    ports:
+      - "27017:27017"
+
+  nats:
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+
+  minio:
+    ports:
+      - "9000:9000"
+      - "9001:9001"

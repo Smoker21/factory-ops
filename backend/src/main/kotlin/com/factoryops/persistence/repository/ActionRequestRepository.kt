@@ -3,6 +3,7 @@ package com.factoryops.persistence.repository
 import com.factoryops.persistence.document.ActionRequestDocument
 import io.quarkus.mongodb.panache.kotlin.PanacheMongoRepository
 import jakarta.enterprise.context.ApplicationScoped
+import org.bson.Document
 import org.bson.types.ObjectId
 
 @ApplicationScoped
@@ -19,4 +20,12 @@ class ActionRequestRepository : PanacheMongoRepository<ActionRequestDocument> {
 
     fun findByTargetOrgId(rootOrgId: ObjectId, targetOrgId: ObjectId): List<ActionRequestDocument> =
         find("rootOrgId = ?1 and targetOrgId = ?2 and deletedAt is null", rootOrgId, targetOrgId).list()
+
+    fun findWithCursor(rootOrgId: ObjectId, cursor: ObjectId?, limit: Int): List<ActionRequestDocument> {
+        val baseFilter = Document("rootOrgId", rootOrgId).append("deletedAt", null)
+        val filter = if (cursor != null) {
+            Document("\$and", listOf(baseFilter, Document("_id", Document("\$gt", cursor))))
+        } else baseFilter
+        return find(filter).page(0, limit).list()
+    }
 }

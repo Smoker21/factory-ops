@@ -4,6 +4,7 @@ plugins {
     kotlin("jvm") version "2.0.21"
     kotlin("plugin.allopen") version "2.0.21"
     id("io.quarkus") version "3.17.4"
+    jacoco
 }
 
 group = "com.factoryops"
@@ -92,4 +93,31 @@ tasks.withType<KotlinCompile> {
 
 tasks.withType<Test> {
     systemProperty("java.util.logging.manager", "org.jboss.logmanager.LogManager")
+    finalizedBy(tasks.jacocoTestReport)
+}
+
+jacoco {
+    toolVersion = "0.8.12"
+}
+
+tasks.jacocoTestReport {
+    dependsOn(tasks.test)
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+    }
+    // Exclude generated/framework code from coverage
+    classDirectories.setFrom(
+        files(classDirectories.files.map {
+            fileTree(it) {
+                exclude(
+                    "**/FactoryOpsApplication*",
+                    "**/*_ClientProxy*",
+                    "**/*_Bean*",
+                    "**/*ScheduledInvoker*",
+                    "**/quarkus-generated*"
+                )
+            }
+        })
+    )
 }

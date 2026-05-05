@@ -4,6 +4,7 @@ import com.factoryops.persistence.document.GroupDocument
 import com.factoryops.persistence.document.GroupMembershipDocument
 import io.quarkus.mongodb.panache.kotlin.PanacheMongoRepository
 import jakarta.enterprise.context.ApplicationScoped
+import org.bson.Document
 import org.bson.types.ObjectId
 
 @ApplicationScoped
@@ -24,6 +25,14 @@ class GroupRepository : PanacheMongoRepository<GroupDocument> {
     fun findByOrganizationIds(rootOrgId: ObjectId, organizationIds: List<ObjectId>): List<GroupDocument> {
         if (organizationIds.isEmpty()) return emptyList()
         return find("rootOrgId = ?1 and organizationId in ?2 and deletedAt is null", rootOrgId, organizationIds).list()
+    }
+
+    fun findWithCursor(rootOrgId: ObjectId, cursor: ObjectId?, limit: Int): List<GroupDocument> {
+        val baseFilter = Document("rootOrgId", rootOrgId).append("deletedAt", null)
+        val filter = if (cursor != null) {
+            Document("\$and", listOf(baseFilter, Document("_id", Document("\$gt", cursor))))
+        } else baseFilter
+        return find(filter).page(0, limit).list()
     }
 }
 

@@ -14,10 +14,12 @@ import com.factoryops.interfaces.dto.UpdateActionRequestRequest
 import com.factoryops.interfaces.dto.toResponse
 import com.factoryops.interfaces.exception.ValidationException
 import com.factoryops.interfaces.filter.RequestContext
+import jakarta.annotation.security.RolesAllowed
 import jakarta.inject.Inject
 import jakarta.validation.Valid
 import jakarta.ws.rs.Consumes
 import jakarta.ws.rs.DELETE
+import jakarta.ws.rs.DefaultValue
 import jakarta.ws.rs.GET
 import jakarta.ws.rs.PATCH
 import jakarta.ws.rs.POST
@@ -44,19 +46,24 @@ class ActionRequestResource {
     lateinit var requestContext: RequestContext
 
     @GET
-    @Operation(summary = "List action requests")
+    @Operation(summary = "List action requests with optional cursor-based pagination")
+    @APIResponse(responseCode = "200", description = "Action request page")
     fun list(
         @QueryParam("status") status: String?,
-        @QueryParam("requesterId") requesterId: String?
+        @QueryParam("requesterId") requesterId: String?,
+        @QueryParam("cursor") cursor: String?,
+        @QueryParam("limit") @DefaultValue("20") limit: Int
     ): Response {
         val rootOrgId = requestContext.requireRootOrgId()
-        val ars = dispatchService.listActionRequests(rootOrgId, status, requesterId)
-        return Response.ok(ActionRequestPageResponse(ars.map { it.toResponse() }, PageInfo(null, false))).build()
+        val (ars, pageInfo) = dispatchService.listActionRequests(rootOrgId, status, requesterId, cursor, limit)
+        return Response.ok(ActionRequestPageResponse(ars.map { it.toResponse() }, pageInfo)).build()
     }
 
     @POST
+    @RolesAllowed("OPERATOR", "SHIFT_LEAD", "ENGINEER", "QA", "GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Submit action request")
     @APIResponse(responseCode = "201", description = "Created")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun create(@Valid request: CreateActionRequestRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -77,7 +84,10 @@ class ActionRequestResource {
 
     @PATCH
     @Path("/{actionRequestId}")
+    @RolesAllowed("OPERATOR", "SHIFT_LEAD", "ENGINEER", "QA", "GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Update action request")
+    @APIResponse(responseCode = "200", description = "Updated")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun update(@PathParam("actionRequestId") id: String, @Valid request: UpdateActionRequestRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -87,7 +97,10 @@ class ActionRequestResource {
 
     @DELETE
     @Path("/{actionRequestId}")
+    @RolesAllowed("SHIFT_LEAD", "GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Soft-delete action request")
+    @APIResponse(responseCode = "204", description = "Deleted")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun delete(@PathParam("actionRequestId") id: String): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -97,7 +110,10 @@ class ActionRequestResource {
 
     @POST
     @Path("/{actionRequestId}/status")
-    @Operation(summary = "Change action request status")
+    @RolesAllowed("SHIFT_LEAD", "GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
+    @Operation(summary = "Change action request status (triage)")
+    @APIResponse(responseCode = "200", description = "Status changed")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun changeStatus(@PathParam("actionRequestId") id: String, @Valid request: ChangeActionRequestStatusRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -109,8 +125,10 @@ class ActionRequestResource {
 
     @POST
     @Path("/{actionRequestId}/convert-to-task")
+    @RolesAllowed("SHIFT_LEAD", "GROUP_ADMIN", "GROUP_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Convert action request to task (triage)")
     @APIResponse(responseCode = "201", description = "Task created from action request")
+    @APIResponse(responseCode = "403", description = "Forbidden")
     fun convertToTask(@PathParam("actionRequestId") id: String, @Valid request: ConvertActionRequestToTaskRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
@@ -132,6 +150,7 @@ class DispatchResource {
     lateinit var requestContext: RequestContext
 
     @POST
+    @RolesAllowed("ORG_MANAGER", "ORG_ADMIN", "ADMIN")
     @Operation(summary = "Dispatch action request from upper org manager to leaf org (Single-hop; v1.3)")
     @APIResponse(responseCode = "201", description = "ActionRequest dispatched")
     @APIResponse(responseCode = "403", description = "Not authorized to dispatch")

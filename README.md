@@ -88,6 +88,16 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 預設 dev 帳號：`admin.system` / `Admin@123456789`（orgCode: `fab-alpha`）
 
+### 切換 HR 後端
+
+```bash
+HR_MODE=mock      # 預設，5 筆寫死員工
+HR_MODE=h2        # 從 test_data/hr_employees.csv 載入 H2 in-memory DB（demo / QA 推薦）
+HR_MODE=external  # 真實 HR REST API（待實作）
+```
+
+CSV 格式與切換細節見 [test_data/README.md](test_data/README.md) 與 [ADR-0014](docs/adr/0014-hr-backend-feature-toggle.md)。
+
 詳細部署說明（production checklist / JWT key rotation / 備份）：[docs/deployment.md](docs/deployment.md)
 
 ---

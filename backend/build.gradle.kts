@@ -48,6 +48,10 @@ dependencies {
     // REST Client (for HR mock)
     implementation("io.quarkus:quarkus-rest-client-jackson")
 
+    // H2 in-memory DB for HR backend (when hr.mode=h2)
+    implementation("io.quarkus:quarkus-agroal")
+    implementation("io.quarkus:quarkus-jdbc-h2")
+
     // Logging
     implementation("io.quarkus:quarkus-logging-json")
 

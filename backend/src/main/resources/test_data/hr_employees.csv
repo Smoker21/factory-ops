@@ -1,0 +1,21 @@
+account_name,employee_no,display_name,email,active,default_roles
+admin.system,EMP-00001,System Admin,admin@factory.example.com,true,ADMIN
+manager.wang,EMP-00002,王廠長,manager.wang@factory.example.com,true,ORG_ADMIN
+director.lin,EMP-00003,林處長,director.lin@factory.example.com,true,ORG_MANAGER
+dept.huang,EMP-00004,黃部門經理,dept.huang@factory.example.com,true,ORG_MANAGER
+section.chen,EMP-00005,陳課長,section.chen@factory.example.com,true,GROUP_MANAGER
+groupadmin.lee,EMP-00006,李組長助理,groupadmin.lee@factory.example.com,true,GROUP_ADMIN
+leader.chen,EMP-00007,陳組長,leader.chen@factory.example.com,true,SHIFT_LEAD;GROUP_MANAGER
+shiftlead.wu,EMP-00008,吳組長,shiftlead.wu@factory.example.com,true,SHIFT_LEAD
+engineer.zhao,EMP-00009,趙工程師,engineer.zhao@factory.example.com,true,ENGINEER
+engineer.sun,EMP-00010,孫工程師,engineer.sun@factory.example.com,true,ENGINEER
+qa.zhang,EMP-00011,張品管,qa.zhang@factory.example.com,true,QA;ENGINEER
+qa.zhou,EMP-00012,周品管,qa.zhou@factory.example.com,true,QA
+operator.li,EMP-00013,李作業員,operator.li@factory.example.com,true,OPERATOR
+operator.tsai,EMP-00014,蔡作業員,operator.tsai@factory.example.com,true,OPERATOR
+operator.lin,EMP-00015,林作業員,operator.lin@factory.example.com,true,OPERATOR
+operator.kuo,EMP-00016,郭作業員,operator.kuo@factory.example.com,true,OPERATOR
+operator.hsu,EMP-00017,徐作業員,operator.hsu@factory.example.com,true,OPERATOR
+intern.lai,EMP-00018,賴實習生,intern.lai@factory.example.com,true,OPERATOR
+former.huang,EMP-00099,黃離職員工,,false,OPERATOR
+former.cheng,EMP-00098,鄭離職員工,,false,OPERATOR

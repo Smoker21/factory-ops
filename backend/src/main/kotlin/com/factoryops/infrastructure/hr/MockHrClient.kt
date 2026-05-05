@@ -1,5 +1,6 @@
 package com.factoryops.infrastructure.hr
 
+import io.quarkus.arc.lookup.LookupIfProperty
 import jakarta.enterprise.context.ApplicationScoped
 import mu.KotlinLogging
 
@@ -7,12 +8,15 @@ private val logger = KotlinLogging.logger {}
 
 /**
  * Mock HR client for development and testing.
- * Returns fixed test employee data.
+ * Returns a small fixed set of test employees baked into the source code.
  *
- * ADR-0007: HR is mocked in dev profile with fixed test data.
- * Real HR client implementation is deferred to production configuration.
+ * Activated when hr.mode=mock (the default).  See [H2HrClient] for a richer,
+ * CSV-driven alternative selected by hr.mode=h2.
+ *
+ * ADR-0007 / ADR-0014: HR backend selection via runtime feature toggle.
  */
 @ApplicationScoped
+@LookupIfProperty(name = "hr.mode", stringValue = "mock", lookupIfMissing = true)
 class MockHrClient : HrClient {
 
     private val employees = mapOf(

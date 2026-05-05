@@ -330,3 +330,17 @@ factory-ops:
 5. 時間欄位 timezone(若 HR 服務只給 epoch ms 或 UTC timestamp,本系統 adapter 補 offset 為 `Asia/Taipei`)
 6. 速率限制與重試政策
 7. 個資保護:跨網段傳輸是否需 TLS、是否符合 GDPR / 個資法
+
+---
+
+## Amendment(2026-05-04)— 新增 H2 in-memory 後端
+
+`HrClient` 介面新增第二個實作 `H2HrClient`,讓 dev 與 demo 環境可選擇較豐富的測試資料來源。詳見 [ADR-0014](./0014-hr-backend-feature-toggle.md)。
+
+切換方式:
+
+| `hr.mode` | Client | 來源 |
+|---|---|---|
+| `mock`(預設) | `MockHrClient` | 5 筆寫死資料 |
+| `h2` | `H2HrClient` | `test_data/hr_employees.csv` → H2 in-memory DB |
+| `external` | (待實作) | 真實 HR REST API |

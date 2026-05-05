@@ -1,144 +1,211 @@
-# 工廠值班工作管理系統 — Agent 團隊安裝包
+# Factory Ops — 工廠值班工作管理系統
 
-這個 zip 包含一組為你客製的 **Claude Code subagent 團隊**,可從規格自動完成整個專案開發。
+服務工廠值班團隊的工作管理系統:**追蹤跨班別 Project / Task / 異常處置 / 交班事項**,把現場「口頭交辦」「便利貼」「Excel 工單」改成可稽核的數位工作流。
 
-## 內容物
+採 **API-first** 設計、**多租戶**、**多型 Task / Group / Organization**、**HR 整合**、**NATS + Webhook 事件**、**行動裝置友善**。
 
-```
-factory-ops-agents/
-├── CLAUDE.md                       # 主協調檔案(專案說明 + 開發流程)
-└── .claude/agents/
-    ├── spec-architect.md           # 規格分析 + 領域建模 + API 設計
-    ├── mongodb-modeler.md          # MongoDB schema + Kotlin entity
-    ├── quarkus-backend-builder.md  # Kotlin + Quarkus 後端
-    ├── react-frontend-builder.md   # React + TS 前端
-    ├── test-engineer.md            # 測試
-    ├── code-reviewer.md            # 唯讀審查
-    └── doc-devops.md               # 文件 + Docker + CI/CD
-```
+---
 
-## 快速開始(3 步驟)
+## 開發進度
 
-### 1. 建立你的專案資料夾
+| 里程碑 | 內容 | 狀態 |
+|---|---|---|
+| **M1** 規格與架構 | requirements v1.3.0 / domain-model / openapi 3.1 / 13 ADR | ✅ 已完成 |
+| **M2** 資料模型 | 16 collections schema、40 Kotlin domain class、index script | ✅ 已完成 |
+| **M3** 後端 + 前端骨架 | Quarkus REST(~85 端點)+ React/TS UI(13 頁面)+ MSW mock | ✅ 已完成(編譯/測試通過,runtime 尚未驗證) |
+| **M4** 測試 + 審查 + CI/CD | 測試覆蓋、code review、docker compose、CI pipeline | ⏳ 規劃中 |
+
+---
+
+## 技術棧
+
+| 層 | 技術 |
+|---|---|
+| 後端 | Kotlin 2.0、Quarkus 3.17、JVM 21、MongoDB 7、NATS JetStream、MinIO(S3 相容) |
+| 前端 | React 18、TypeScript 5、Vite、Mantine 7、TanStack Query、React Router v6、i18next |
+| 認證 | JWT(access + refresh,RSA)、Bcrypt 密碼雜湊 |
+| 整合 | HR Mock REST(可替換為實際 HR 服務) |
+| 文件 | OpenAPI 3.1(Swagger UI)、Mermaid、ADR |
+
+---
+
+## 系統概觀
+
+### 領域模型重點
+
+- **Organization** — 多型樹狀組織(`FAB → DIVISION → DEPARTMENT → SECTION`,只有 leaf SECTION 承載工作)
+- **Group** — 平面工作群組,屬於唯一 leaf Organization,可多型(`DEFAULT / LINE / TEAM / SHIFT`)
+- **Project** — 工作集合,屬於唯一 leaf Org,可掛多 Group
+- **Task** — 多型(`EQUIPMENT_INSPECTION / INCIDENT_RESPONSE / SHIFT_HANDOVER / …`),可指派多人但**單一 owner**
+- **ActionRequest** — 動作需求,支援**單跳跨層派工**(上級 Org 直接派至 leaf)
+- **Template** — Project / Task 範本,GLOBAL(Admin)+ ORG(Org 內)雙 scope,版本化、實例化即 clone
+
+### 9 個角色
+
+`OPERATOR / SHIFT_LEAD / ENGINEER / QA / GROUP_ADMIN / GROUP_MANAGER / ORG_MANAGER / ORG_ADMIN / ADMIN`
+
+詳見 [`docs/spec/requirements.md` §6 RBAC](docs/spec/requirements.md)。
+
+### 多租戶
+
+所有資料以 `rootOrgId` 隔離,索引第一欄一律 `rootOrgId`(ADR-0005)。一位 User 屬於唯一 root Org(MVP 限制)。
+
+---
+
+## 快速開始(本機開發)
+
+### 先備
+
+- JDK 21(本案以 Microsoft OpenJDK 21 為準)
+- Node.js 20+
+- Docker(待 M4 提供 docker compose)
+- 暫時手動跑 MongoDB 7 / MinIO / NATS(M4 會打包)
+
+### 後端
 
 ```bash
-mkdir factory-ops
-cd factory-ops
-git init
+cd backend
+# Windows PowerShell:
+$env:JAVA_HOME='C:\Program Files\Microsoft\jdk-21.0.10.7-hotspot'
+$env:Path = "$env:JAVA_HOME\bin;$env:Path"
+.\gradlew.bat quarkusDev
+
+# Bash:
+export JAVA_HOME='/c/Program Files/Microsoft/jdk-21.0.10.7-hotspot'
+./gradlew quarkusDev
 ```
 
-### 2. 把這個 zip 解壓進去
+啟動後:
+- API:http://localhost:8080
+- Swagger UI:http://localhost:8080/q/swagger-ui
+- Health:http://localhost:8080/q/health
 
-把 `CLAUDE.md` 和 `.claude/` 整個資料夾放到 `factory-ops/` 根目錄。最終結構:
+`dev` profile 會自動 seed 一份 4 層 Org 樹 + 5 位假員工 + 1 個 Project + 數個 Task,便於 UI 立刻可用。
+
+### 前端
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+預設開 http://localhost:5173。若後端尚未啟動,前端會 fallback 到 MSW mock(可離線跑 E2E)。
+
+### 環境變數
+
+複製 `frontend/.env.local.example` 為 `frontend/.env.local`,設定 `VITE_API_BASE_URL`。
+
+後端用 env / `application-dev.properties`,主要 keys:
+
+```properties
+quarkus.mongodb.connection-string=mongodb://localhost:27017
+quarkus.mongodb.database=factory_ops
+minio.endpoint=http://localhost:9000
+nats.url=nats://localhost:4222
+hr.mode=mock
+```
+
+### 索引初始化
+
+```bash
+mongosh factory_ops backend/src/main/resources/db/init-indexes.js
+```
+
+---
+
+## 專案結構
 
 ```
 factory-ops/
-├── CLAUDE.md
-└── .claude/
-    └── agents/
-        └── (7 個 .md 檔)
-```
-
-### 3. 啟動 Claude Code
-
-```bash
-cd factory-ops
-claude
-```
-
-進入後輸入:
-
-```
-> 請用 spec-architect 開始進行規格分析與領域建模。
-> 業務描述參照 CLAUDE.md,完成後停下來等我審查。
+├── README.md                       # 你正在讀的這個
+├── AGENTS_PACK.md                  # Agent 團隊安裝包說明(自動化開發流程)
+├── CLAUDE.md                       # 給 Claude Code 的協調設定
+├── STATUS.md                       # 全專案里程碑狀態
+├── .claude/agents/                 # 7 個 subagent 定義(spec / data / backend / frontend / test / review / docs)
+├── docs/
+│   ├── spec/                       # 需求 / 領域模型 / OpenAPI / spec STATUS
+│   ├── data/                       # MongoDB schema / indexes / 範例文件
+│   ├── adr/                        # 13 份架構決策紀錄
+│   ├── backend/                    # 後端銜接訊息與啟動指引
+│   └── frontend/                   # 前端銜接訊息
+├── backend/                        # Kotlin + Quarkus + MongoDB
+│   ├── build.gradle.kts
+│   └── src/main/kotlin/com/factoryops/
+│       ├── domain/                 # 純資料 Domain class(無 BSON / Panache)
+│       ├── persistence/            # Document + Repository + Mapper
+│       ├── application/            # Service + Auth + Policy
+│       ├── interfaces/             # REST + DTO + Exception + Filter
+│       └── infrastructure/         # NATS / Webhook / Outbox / MinIO / HR
+└── frontend/                       # React + TypeScript + Vite
+    └── src/
+        ├── routes/                 # 13 頁面
+        ├── components/             # 17 元件
+        ├── api/                    # 11 個 API client
+        ├── hooks/, store/, theme/, i18n/, mocks/, rbac/
+        └── auth/
 ```
 
 ---
 
-## 開發流程(4 個里程碑)
+## 重要文件入口
 
-每個里程碑完成後 **agent 會停下來**,你檢視沒問題再啟動下一棒。
+- 系統概述與需求:[docs/spec/requirements.md](docs/spec/requirements.md)
+- 領域模型(含 Mermaid 類圖):[docs/spec/domain-model.md](docs/spec/domain-model.md)
+- API 合約(OpenAPI 3.1):[docs/spec/openapi.yaml](docs/spec/openapi.yaml)
+- 資料模型(16 collections):[docs/data/schema.md](docs/data/schema.md)
+- 索引設計:[docs/data/indexes.md](docs/data/indexes.md)
+- 架構決策(ADR):[docs/adr/](docs/adr/)
+- 全域進度:[STATUS.md](STATUS.md)
 
-### 里程碑 1 — 規格與架構
-```
-> 請用 spec-architect 開始
-```
-**檢視重點**: `docs/spec/requirements.md`、`docs/spec/openapi.yaml`
+### 關鍵 ADR
 
-### 里程碑 2 — 資料模型
-```
-> 規格已驗收,請用 mongodb-modeler 接手
-```
-**檢視重點**: `docs/data/schema.md` 的設計理由
-
-### 里程碑 3 — 後端 + 前端
-```
-> Schema 已驗收,請用 quarkus-backend-builder 實作後端,
-> 完成後接著用 react-frontend-builder 實作前端
-```
-**檢視重點**: `docker compose up` 能跑、主要流程能用
-
-### 里程碑 4 — 測試 + 審查 + 文件
-```
-> 程式碼已驗收,請依序:
-> 1. test-engineer 補強測試
-> 2. code-reviewer 全面審查
-> 3. doc-devops 完成文件與 CI/CD
-```
-**檢視重點**: 測試覆蓋率、審查報告
+| ID | 主題 |
+|---|---|
+| ADR-0001 | Polymorphic Task design |
+| ADR-0002 | Multi-assignee + single owner |
+| ADR-0003 | Attachment & markdown storage(MinIO + presigned URL) |
+| ADR-0004 | Organization 樹 + 平面 Group |
+| ADR-0005 | Multi-tenancy(rootOrgId 隔離) |
+| ADR-0006 | Template versioning + GLOBAL/ORG scope |
+| ADR-0007 | User-HR integration |
+| ADR-0008 | Single-hop cross-org dispatch |
+| ADR-0009 | NATS + Webhook event distribution |
+| ADR-0010 | Single org manager + multi leaders |
+| ADR-0011 | Group settings QA dual-sign |
+| ADR-0012 | Organization tree materialized path |
+| ADR-0013 | Collection naming + ID strategy |
 
 ---
 
-## 重要提示
+## 開發規約
 
-### 修改 agent 設定
-直接編輯 `.claude/agents/<name>.md` 即可,Claude Code 重啟後生效。
-
-### 個人 vs 專案範圍
-這組 agent 放在**專案範圍**(`.claude/agents/`),只在這個專案有效。
-若要全域使用,複製到 `~/.claude/agents/` 即可。
-
-### 看 agent 狀態
-```
-> /agents
-```
-會列出所有可用的 subagent。
-
-### 自主程度調整
-目前設定為「完成大功能才回報」(自主程度 2)。
-- 想更謹慎 → 在每個 agent 的「完成標準」之前加更多 checkpoint
-- 想更自主 → 把 CLAUDE.md 的「里程碑」說明改成可連續執行
-
-### MongoDB 注意事項
-這組 agent 假設用 **MongoDB 7+** 與 **Quarkus 3.x**。如果你的環境不同,記得到對應 agent 檔案的「技術棧」段落調整版本號。
+- **文件**:繁體中文
+- **程式碼識別字、commit、註解**:英文
+- **時間**:全用 UTC ISO 8601;UI 依 root Org timezone 顯示
+- **多租戶**:每個 query 必有 `rootOrgId` 條件,索引第一欄一律 `rootOrgId`
+- **敏感資料**:`passwordHash` / `webhook.secret` / JWT 私鑰**永不入 log**
+- **不留** `TODO` / `FIXME` / 註解掉的程式碼;debug 用 logger 不用 `println` / `console.log`
+- 詳細規則見 [`CLAUDE.md`](CLAUDE.md)
 
 ---
 
-## 客製化建議
+## 安全須知
 
-每個 agent 都有預留客製化點,如:
-
-- **多語系**: 在 `react-frontend-builder.md` 加入 i18n 套件
-- **ISO 規範**: 在 `spec-architect.md` 加入工廠合規需求(ISO 9001、IATF 16949)
-- **班別管理**: 在 `mongodb-modeler.md` 增加 Shift collection 設計
-- **稽核軌跡**: 已有預留(每個 entity 都有 `history` embedded array)
+- `backend/src/main/resources/jwt/*.pem` 為**僅供本機開發**的 RSA 金鑰對(已隨 repo 公開)。**部署 production 前必須輪換**,詳見 [backend/src/main/resources/jwt/README.md](backend/src/main/resources/jwt/README.md)。
+- `frontend/.env.local` 不入版控(已 gitignore)。
+- 預設 dev 帳號由 `DevDataSeeder` 寫入 — production 啟動前先停用 seeder。
 
 ---
 
-## 疑難排解
+## 自動化開發流程(Agent Team)
 
-**Q: agent 沒被自動觸發?**
-A: 檢查該 agent 的 `description` 寫得夠不夠具體。Claude 是靠 description 判斷何時委派的。
+本專案以 **Claude Code subagent 團隊**自動化開發,採里程碑式驗收。詳見 [AGENTS_PACK.md](AGENTS_PACK.md) 與 [CLAUDE.md](CLAUDE.md)。
 
-**Q: agent 跑到一半停了?**
-A: 用 `/agents` 確認沒被 disable,然後 `> 繼續` 即可。
-
-**Q: 想換成 Spring Boot?**
-A: 編輯 `quarkus-backend-builder.md` 的「技術棧」段落,把 Quarkus 換成 Spring Boot,工具鏈也對應換掉。其他 agent 不用動。
-
-**Q: 想接其他資料庫?**
-A: 編輯 `mongodb-modeler.md`,改成 PostgreSQL/Oracle 設計者。schema.md 的格式邏輯仍然適用。
+7 個 subagent:`spec-architect / mongodb-modeler / quarkus-backend-builder / react-frontend-builder / test-engineer / code-reviewer / doc-devops`,各自專責一個階段。
 
 ---
 
-祝開發順利!🛠️
+## License
+
+待定。

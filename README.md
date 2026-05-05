@@ -223,6 +223,7 @@ factory-ops/
 
 ## 重要文件入口
 
+- 使用手冊（含 16 張 UI 截圖）：[docs/user-manual/zh-TW.md](docs/user-manual/zh-TW.md)
 - 系統架構圖與模組說明：[docs/architecture.md](docs/architecture.md)
 - 部署指引（Docker / JWT / 備份）：[docs/deployment.md](docs/deployment.md)
 - 維運手冊（Health check / 排查 / Metric）：[docs/operations.md](docs/operations.md)

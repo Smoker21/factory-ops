@@ -1,59 +1,52 @@
 # 工廠值班工作管理系統 — 開發狀態
 
-**最後更新**: 2026-05-04
+**最後更新**: 2026-05-06
 **目前版本**: v1.0.0-M4 / spec v1.3.0 / data-model v1.0.0
+**下一個里程碑**: M5+(主題待規劃)
 
 ---
 
 ## 里程碑進度
 
-| # | 里程碑 | 負責 agent | 狀態 |
-|---|---|---|---|
-| 1 | 規格 + 領域設計 | spec-architect | ✅ **COMPLETED (v1.3)** |
-| 2 | 資料模型 | mongodb-modeler | ✅ **COMPLETED (v1.0)** |
-| 3 | 後端 + 前端骨架 | quarkus-backend-builder → react-frontend-builder | ✅ **COMPLETED（編譯 / 測試通過）** |
-| 4 | 測試 + 審查 + 文件 + 部署 | test-engineer → code-reviewer → doc-devops | ✅ **COMPLETED (2026-05-04)** |
+| # | 里程碑 | 負責 agent | 狀態 | 詳細紀錄 |
+|---|---|---|---|---|
+| 1 | 規格 + 領域設計 | spec-architect | ✅ COMPLETED | `docs/spec/STATUS.md` |
+| 2 | 資料模型 | mongodb-modeler | ✅ COMPLETED | `docs/data/STATUS.md` |
+| 3 | 後端 + 前端骨架 | quarkus-backend-builder → react-frontend-builder | ✅ COMPLETED | `docs/backend/STATUS.md`、`docs/frontend/STATUS.md` |
+| 4 | 測試 + 審查 + 文件 + 部署 | test-engineer → code-reviewer → doc-devops | ✅ COMPLETED (2026-05-04) | `docs/test/STATUS.md`、`docs/review/STATUS.md`、`docs/devops/STATUS.md`、CHANGELOG `[1.0.0-M4]` |
+
+各里程碑完成摘要見 `CHANGELOG.md`。
 
 ---
 
-## M4 完成摘要（2026-05-04）
+## P1 / P2 Backlog(M4 code review 留下)
 
-**test-engineer** — 後端 65 個 mockito unit tests + 前端 55 個 Vitest 測試；JaCoCo / v8 coverage 報告設定
-
-**code-reviewer** — 65 項發現（Critical:8 / High:18 / Medium:22 / Low:12 / Info:5）；P0 15 項已修復
-
-**doc-devops** — Docker Compose 完整環境、CI/CD workflows（3 個）、文件補完（architecture / deployment / operations / api）、CHANGELOG
-
----
-
-## Code Review P1/P2 Backlog（50 項，留給下一迭代）
-
-### P1（High 優先，下一版本迭代前修）
+### P1(下一版本迭代前修)
 
 | 編號 | 位置 | 說明 |
 |---|---|---|
-| S-009 | `frontend/src/api/client.ts` | JWT 存 localStorage → 改 httpOnly cookie（XSS 風險） |
-| P-001 | 所有列表 Resource | Cursor pagination 實作（目前回傳 null cursor，NFR p95 < 300ms 未達） |
+| S-009 | `frontend/src/api/client.ts` | JWT 存 localStorage → 改 httpOnly cookie(XSS 風險) |
+| P-001 | 所有列表 Resource | Cursor pagination 實作(目前回傳 null cursor,NFR p95 < 300ms 未達) |
 | S-016 | AuthService | 連續失敗登入鎖定機制缺失 |
-| S-008-ext | RevocationStore | Logout blacklist 後需定期清理過期 token（TTL index） |
+| S-008-ext | RevocationStore | Logout blacklist 後需定期清理過期 token(TTL index) |
 | C-005 | DispatchService.convertToTask | convertToTask 未驗證 AR 狀態 + priority 映射 |
-| C-006 | TaskService | force-complete 只驗 dualSign，未驗 actor 是 Group member |
+| C-006 | TaskService | force-complete 只驗 dualSign,未驗 actor 是 Group member |
 | C-007 | TaskService.buildQaReviewPolicy | mapNotNull 靜默忽略找不到的 group → 改 throw |
 | C-008 | TaskService | IN_REVIEW → DONE 兩條路徑行為不一致 |
 | C-009 | ProjectService | PAUSED → COMPLETED 狀態流缺漏 |
 | C-010 | ProjectService.createProject | 未驗證 `due > start` |
 | C-011 | TaskService.createTask | 未驗證 `dueAt ≥ project.startAt` |
 | C-012 | TaskService.addAssignees | 未驗證 user 全部 active 且同 rootOrgId |
-| C-014 | OrganizationService.deleteOrg | 未擋有 active resources（Group/Project） |
+| C-014 | OrganizationService.deleteOrg | 未擋有 active resources(Group/Project) |
 | C-015 | OutboxPoller | retryCount 無上限且無 dead-letter |
 | P-002 | 所有列表端點 | `?since=` / ETag / If-Modified-Since 增量同步未實作 |
-| S-010 | application.properties | CORS 設定缺 prod origin env 機制（現已修 env，但 prod override 待驗） |
+| S-010 | `application.properties` | CORS 設定缺 prod origin env 機制(現已修 env,但 prod override 待驗) |
 | S-011 | UserService.createUser | 明文 defaultPassword + 無強度檢查 |
 | S-013 | UserRepository.searchByKeyword | regex ReDoS 潛在風險 |
 | S-015 | AuthResource | logout / changePassword 無 rate-limit |
 | S-017 | LoginRequest | password 缺 @Size(max=128) → bcrypt CPU 高 |
 
-### P2（Medium/Low，後續迭代）
+### P2(後續迭代)
 
 | 編號 | 說明 |
 |---|---|
@@ -65,18 +58,18 @@
 | P-007 | OutboxPoller 無 sharding key |
 | P-008 | 前端缺 React.memo / 虛擬化 |
 | P-009 | ProjectService.addMember 5 個 query 可合 $addToSet |
-| P-010 | bundle size 未驗；MUI 全量引入 |
+| P-010 | bundle size 未驗;MUI 全量引入 |
 | S-014 | MarkdownRenderer attachment URL 未驗 ObjectId 格式 |
 | S-018 | login 失敗 audit trail 不利分析 |
 | S-019 | GlobalExceptionMapper log 可能帶到 password |
 | S-020 | /health path 未加入公開白名單 |
-| M-001 | OutboxPoller 留 TODO（CLAUDE.md 禁止） |
+| M-001 | OutboxPoller 留 TODO(CLAUDE.md 禁止) |
 | M-002 | i18n en-US.json 留 _comment: TODO |
 | M-004 | TaskService.createTask inline mapping 25 行 |
 | M-005 | TaskService TaskMapper.run idiom 困惑 |
 | M-006 | GroupService.listGroups in-memory filter |
 | M-007 | UserService.searchUsers 無 rootOrgId scope |
-| 其餘 Info | 見 docs/review/code-review-report.md §2.5 |
+| 其餘 Info | 見 `docs/review/code-review-report.md` §2.5 |
 
 ---
 

@@ -93,7 +93,7 @@ export function ProjectsPage() {
             <Button variant="outline" onClick={openTemplate} style={{ minHeight: 44 }}>
               {t('project.fromTemplate')}
             </Button>
-            <Button onClick={openCreate} style={{ minHeight: 44 }}>
+            <Button onClick={openCreate} style={{ minHeight: 44 }} data-testid="create-project-button">
               {t('project.create')}
             </Button>
           </Group>

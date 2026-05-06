@@ -1,0 +1,22 @@
+{
+  "name": "@factory-ops/e2e",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "e2e": "cucumber-js",
+    "e2e:dry": "cucumber-js --dry-run",
+    "e2e:report": "node scripts/generate-report.cjs",
+    "playwright:install": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@cucumber/cucumber": "^11.0.0",
+    "@playwright/test": "^1.44.0",
+    "@types/node": "^18.0.0",
+    "cucumber-html-reporter": "^7.1.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.0"
+  }
+}

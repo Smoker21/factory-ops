@@ -1,0 +1,49 @@
+{
+  "org": {
+    "orgCode": "taichung-fab",
+    "rootOrgId": "69fa6761a67ad47a8ff060fd",
+    "leafOrgId": "69fa6761a67ad47a8ff06100",
+    "groupId": "69fa6762a67ad47a8ff0610b"
+  },
+  "users": {
+    "admin.system": {
+      "id": "69fa6761a67ad47a8ff06101",
+      "accountName": "admin.system",
+      "displayName": "System Admin",
+      "password": "Admin@123456789",
+      "roles": ["ADMIN"]
+    },
+    "manager.wang": {
+      "id": "69fa6761a67ad47a8ff06103",
+      "accountName": "manager.wang",
+      "displayName": "王廠長",
+      "password": "Manager@123456789",
+      "roles": ["ORG_ADMIN"]
+    },
+    "leader.chen": {
+      "id": "69fa6761a67ad47a8ff06105",
+      "accountName": "leader.chen",
+      "displayName": "陳組長",
+      "password": "Leader@123456789",
+      "roles": ["SHIFT_LEAD", "GROUP_MANAGER"]
+    },
+    "operator.li": {
+      "id": "69fa6762a67ad47a8ff06107",
+      "accountName": "operator.li",
+      "displayName": "李作業員",
+      "password": "Operator@123456789",
+      "roles": ["OPERATOR"]
+    },
+    "qa.zhang": {
+      "id": "69fa6762a67ad47a8ff06109",
+      "accountName": "qa.zhang",
+      "displayName": "張品管",
+      "password": "QA@1234567890",
+      "roles": ["QA", "ENGINEER"]
+    }
+  },
+  "existingProject": {
+    "id": "69fa6762a67ad47a8ff0610c",
+    "name": "2026 Q2 設備維護專案"
+  }
+}

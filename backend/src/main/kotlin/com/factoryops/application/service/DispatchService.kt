@@ -265,7 +265,8 @@ class DispatchService(
             attributes = emptyMap(),
             schedule = null,
             tags = emptyList(),
-            actorId = actorId
+            actorId = actorId,
+            originActionRequestId = actionRequestId
         )
 
         doc.linkedTaskId = ObjectId(task.id!!)

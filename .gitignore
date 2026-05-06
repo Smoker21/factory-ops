@@ -90,3 +90,9 @@ tmp/
 # --- Claude Code per-user settings (do not commit) ---
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+
+# --- E2E (Cucumber + Playwright) transient artefacts ---
+e2e/node_modules/
+e2e/reports/
+e2e/test-results/
+e2e/playwright-report/

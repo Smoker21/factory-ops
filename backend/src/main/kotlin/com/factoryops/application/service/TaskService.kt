@@ -97,7 +97,8 @@ class TaskService(
         attributes: Map<String, Any?>,
         schedule: TimeRange?,
         tags: List<String>,
-        actorId: String
+        actorId: String,
+        originActionRequestId: String? = null
     ): Task {
         val rootId = ObjectId(rootOrgId)
 
@@ -121,6 +122,7 @@ class TaskService(
             d.priority = priority.name
             d.ownerId = ObjectId(ownerId)
             d.assignees = allAssignees.map { ObjectId(it) }
+            d.originActionRequestId = originActionRequestId?.let { ObjectId(it) }
             d.attributes = attributes
             d.schedule = schedule?.let { com.factoryops.persistence.document.TimeRangeDocument().also { r -> r.start = it.start; r.due = it.due } }
             d.tags = tags

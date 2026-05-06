@@ -375,7 +375,8 @@ class DispatchServiceExtendedUnitTest {
             attributes = any(),
             schedule = org.mockito.kotlin.anyOrNull(),
             tags = any(),
-            actorId = any()
+            actorId = any(),
+            originActionRequestId = org.mockito.kotlin.anyOrNull()
         )).thenReturn(task)
         val captured = argumentCaptor<ActionRequestDocument>()
         doNothing().whenever(actionRequestRepository).update(captured.capture())

@@ -29,11 +29,11 @@ export function UserMenu() {
   return (
     <Menu shadow="md" width={200}>
       <Menu.Target>
-        <Group style={{ cursor: 'pointer' }} gap="xs">
+        <Group style={{ cursor: 'pointer' }} gap="xs" data-testid="user-menu-trigger">
           <Avatar color="blue" radius="xl" size="sm">
             {getInitials(user.displayName)}
           </Avatar>
-          <Text size="sm" visibleFrom="sm">
+          <Text size="sm" visibleFrom="sm" data-testid="user-display-name">
             {user.displayName}
           </Text>
         </Group>
@@ -42,7 +42,7 @@ export function UserMenu() {
         <Menu.Label>{user.accountName}</Menu.Label>
         <Menu.Item onClick={() => navigate('/profile')}>{t('nav.profile')}</Menu.Item>
         <Menu.Divider />
-        <Menu.Item color="red" onClick={handleLogout}>
+        <Menu.Item color="red" onClick={handleLogout} data-testid="logout-menu-item">
           {t('auth.logout')}
         </Menu.Item>
       </Menu.Dropdown>

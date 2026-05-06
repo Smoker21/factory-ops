@@ -8,6 +8,7 @@
     假設 後端與前端皆已在 docker compose 啟動
     並且 已有 seed 資料(組織 "taichung-fab"、admin.system / Admin@123456789)
 
+  @smoke
   情境: 正確認證後跳轉到每日工作看板
     當 我打開登入頁
     那麼 「組織代號」欄位應預填為 "taichung-fab"

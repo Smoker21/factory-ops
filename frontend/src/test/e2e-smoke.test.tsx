@@ -72,9 +72,13 @@ describe('Auth Smoke Tests', () => {
       expect(screen.getByPlaceholderText('accountName')).toBeDefined()
     })
 
+    const orgInput = screen.getByPlaceholderText('taichung-fab')
     const accountInput = screen.getByPlaceholderText('accountName')
     const passwordInput = screen.getByPlaceholderText('••••••••')
 
+    // orgCode is now required client-side; fill it so zod lets the form submit
+    // and the failure path actually reaches the apiLogin → catch → Alert flow.
+    fireEvent.change(orgInput, { target: { value: 'taichung-fab' } })
     fireEvent.change(accountInput, { target: { value: 'wrong.user' } })
     fireEvent.change(passwordInput, { target: { value: 'WrongPassword123' } })
     fireEvent.submit(accountInput.closest('form')!)

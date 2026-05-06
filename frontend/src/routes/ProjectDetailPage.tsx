@@ -21,6 +21,8 @@ import { z } from 'zod'
 import { notifications } from '@mantine/notifications'
 import { useProject, useChangeProjectStatus } from '@/hooks/useProjects'
 import { useTasks, useCreateTask } from '@/hooks/useTasks'
+import { listUsers } from '@/api/users'
+import { useQuery } from '@tanstack/react-query'
 import { TaskCard } from '@/components/task/TaskCard'
 import { ProjectStatusBadge } from '@/components/project/ProjectStatusBadge'
 import { TaskTypeForm } from '@/components/task/TaskTypeForm'
@@ -54,6 +56,14 @@ export function ProjectDetailPage() {
   const taskTypesQuery = useTaskTypes()
   const changeStatusMutation = useChangeProjectStatus(projectId ?? '')
   const createTaskMutation = useCreateTask()
+  // Resolve owner + member display names. Backend returns memberIds[] only;
+  // we fetch the visible users once and map ids to displayName for the UI.
+  const usersQuery = useQuery({
+    queryKey: ['users', 'project-detail', projectId ?? ''],
+    queryFn: () => listUsers({ limit: 200 }),
+    staleTime: 30_000,
+    enabled: !!projectId,
+  })
 
   const methods = useForm<CreateTaskFormData>({
     resolver: zodResolver(createTaskSchema),
@@ -83,6 +93,11 @@ export function ProjectDetailPage() {
 
   const project = projectQuery.data
   const tasks = tasksQuery.data?.items ?? []
+  const usersById = new Map((usersQuery.data?.items ?? []).map((u) => [u.id, u]))
+  const ownerName = usersById.get(project.ownerId)?.displayName ?? project.ownerId
+  const memberNames = project.memberIds.map(
+    (id) => usersById.get(id)?.displayName ?? id,
+  )
 
   const taskTypeOptions = (taskTypesQuery.data ?? []).map((tt) => ({
     value: tt.type,
@@ -178,6 +193,27 @@ export function ProjectDetailPage() {
           </Text>
         )}
       </Group>
+
+      <Stack gap="xs">
+        <Text size="sm" data-testid="project-owner">
+          <strong>{t('project.owner')}：</strong>
+          <span data-testid="project-owner-name">{ownerName}</span>
+        </Text>
+        <Text size="sm">
+          <strong>{t('project.members')}：</strong>
+          <Group gap="xs" data-testid="project-members" mt={4}>
+            {memberNames.length === 0 ? (
+              <Text size="sm" c="dimmed">{t('app.noData')}</Text>
+            ) : (
+              memberNames.map((name, i) => (
+                <Badge key={`${name}-${i}`} variant="light" data-testid="project-member">
+                  {name}
+                </Badge>
+              ))
+            )}
+          </Group>
+        </Text>
+      </Stack>
 
       <Tabs defaultValue="tasks">
         <Tabs.List>

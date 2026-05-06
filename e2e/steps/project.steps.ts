@@ -176,36 +176,19 @@ Then('我應該看到 owner 欄位顯示 {string}', async function (
   this: FactoryOpsWorld,
   ownerName: string
 ) {
-  // Wait for project detail to fully load
   await this.page.waitForLoadState('networkidle');
-  await this.page.waitForTimeout(2000);
 
-  // Wait for title to confirm page rendered
-  const title = this.page.locator('h2, h3, h1').first();
-  await expect(title).toBeVisible({ timeout: 8000 });
-
-  // The UI must show the owner name — assert hard
-  const ownerText = this.page.getByText(ownerName, { exact: false });
-  await expect(
-    ownerText,
-    `Owner name "${ownerName}" should be visible on project detail page. ` +
-    `Check if ProjectDetailPage fetches and renders the owner's displayName.`
-  ).toBeVisible({ timeout: 5000 });
+  // Use the dedicated testid so we don't collide with member badges that may
+  // also display the same name (admin can be both owner AND a member).
+  const ownerLocator = this.page.getByTestId('project-owner-name');
+  await expect(ownerLocator).toBeVisible({ timeout: 8000 });
+  await expect(ownerLocator).toHaveText(ownerName);
 });
 
 Then('成員列表應包含 {string}', async function (this: FactoryOpsWorld, memberName: string) {
-  // SEED MISMATCH NOTE: The feature says "王經理" but DevDataSeeder seeds manager.wang
-  // with displayName "王廠長". The UI will display "王廠長". This test asserts the literal
-  // text from the feature file ("王經理"), which will fail until either the seed or the
-  // feature is updated to match.
-  // Additionally, the ProjectDetailPage does not currently render a member list tab/section
-  // that shows member displayNames — members are stored as IDs only in the project view.
-  const memberLocator = this.page.getByText(memberName, { exact: false });
-  await expect(
-    memberLocator,
-    `Member "${memberName}" should be visible in project detail. ` +
-    `Note: seed has "王廠長" not "王經理" — verify feature vs seed data.`
-  ).toBeVisible({ timeout: 5000 });
+  const members = this.page.getByTestId('project-member');
+  await expect(members.first()).toBeVisible({ timeout: 8000 });
+  await expect(members.filter({ hasText: memberName })).toHaveCount(1, { timeout: 5000 });
 });
 
 // ----------------------------------------------------------------------------

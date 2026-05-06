@@ -19,7 +19,7 @@
     假設 已存在一個由 admin.system 建立、含 manager.wang 為 MEMBER 的專案 "權限測試"
     當 我打開「權限測試」的詳情頁
     那麼 我應該看到 owner 欄位顯示 "System Admin"
-    並且 成員列表應包含 "王經理"
+    並且 成員列表應包含 "王廠長"
 
   情境: 不存在的專案 ID 顯示 NotFound
     當 我直接造訪 "/projects/000000000000000000000000"

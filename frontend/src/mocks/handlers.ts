@@ -12,7 +12,13 @@ import type {
   ReviewDecision,
 } from '@/api/types'
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080/v1'
+// Must match the apiClient fallback in src/api/client.ts. When VITE_API_BASE_URL
+// is unset (e.g. on CI without .env.local) both sides fall back to '/v1'
+// (relative), and MSW v2 matches relative patterns against window.location.origin
+// — same origin axios resolves them against — so handler URLs and request URLs
+// stay aligned. A different fallback here causes MSW to miss the request and
+// jsdom to attempt real network calls that fail with ERR_NETWORK.
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/v1'
 
 // Seed users matching backend dev seed
 const SEED_USERS: Record<string, User & { password: string }> = {

@@ -270,3 +270,48 @@ JetStream stream:
 - `factory-ops.outbox.batch-size`(預設 100)
 - `factory-ops.webhook.retry-schedule`(預設 `1m,5m,30m,2h,6h`)
 - `factory-ops.nats.servers`(env)
+
+---
+
+## v1.4 Amendment(2026-05-08)— ActionRequest leaf reject 不主動推 push(Q-20 拍板)
+
+### 背景
+
+v1.3 引入 Single-hop direct dispatch(ADR-0008 v1.3),衍生 Q-20:**leaf 端 GROUP_MANAGER reject ActionRequest 時,系統是否要對 originator(發起的 manager)做主動推播**(in-app notification 或 email)?2026-05-07 規劃會議拍板:**不主動推**,沿用既有雙通道事件分發機制即可。
+
+### Decision
+
+1. **Leaf reject 觸發時,系統行為**:
+   - ActionRequest `status = REJECTED`,`history[]` 寫入 reject reason
+   - **`OutboxEntry` 寫入 `factory-ops.action-request.rejected`** 事件(同一 transaction)
+   - `OutboxRelayWorker` 將事件推送至 NATS + 已註冊的 Webhook(雙通道,沿用本 ADR §1)
+2. **系統不另行做的事**(明確列出避免實作走偏):
+   - 不查詢 originating manager 的 user record 並產生 in-app notification 文件
+   - 不寄送 email / SMS / push notification 給 originator
+   - 不額外 emit 額外的 user-targeted event(例如 `user.notification.action-request-rejected`)
+3. **Originator 得知 reject 的途徑**(由訂閱者 / 看板自處理):
+   - 訂閱 `factory-ops.action-request.rejected` NATS topic 的下游服務(若未來建 Notification 模組,屬該模組職責)
+   - 註冊 webhook 接 `action-request.rejected` 事件(典型整合 Slack / Line / 自建 dashboard)
+   - **使用者主動查看**:`GET /action-requests/{id}` 或 originator 的儀表板報表(列出自己 dispatched 的 ActionRequest 與當前狀態)
+
+### 為何不做 push
+
+- **Q-5 / Q-10 既有原則**:本期僅預留 webhook 訂閱,實際 APNs / FCM / in-app push 留待後續 Mobile App / Notification 模組
+- **資源邊界清晰**:Factory Ops 是工作管理系統,不是通知中心;若需「派工被退回提醒」,屬 Notification 子模組 / 第三方訂閱
+- **冪等容易**:訂閱者收到 event 後自行決定是否 push,避免本系統內建 push 機制日後與 Notification 模組重複
+
+### Consequences
+
+**正面**:
+- 通知策略一致:**所有事件都走相同的 NATS + Webhook 雙通道**,無「reject 是特例」的分支邏輯
+- Factory Ops 後端不需新增 in-app notification document / push gateway 整合
+- Originator 想要「reject 立刻通知」時,可透過 webhook 自建整合
+
+**負面**:
+- Originator 若不主動查看,會延遲得知 reject(由 Operations SOP 補:dispatcher 看儀表板「我發出的 ActionRequest」)
+- 未來若有 stakeholder 想要 in-app push,需另開 Notification 模組(M6+ 候選主題)
+
+**後續工作**:
+- 無 code change(M5.1 不涉 backend)
+- domain-model.md §4.12 sequence 補 reject 替代分支(已隨 v1.4 同步)
+- requirements.md §FR-Dispatch.7 字句確認(已隨 v1.4 同步)

@@ -1,7 +1,7 @@
 import { Given, When, Then } from '@cucumber/cucumber';
 import { expect } from '@playwright/test';
 import type { FactoryOpsWorld } from '../support/world';
-import { loginAs, injectAuthToLocalStorage, seedActionRequest } from '../support/api';
+import { loginAs, injectAuthCookies, seedActionRequest } from '../support/api';
 import { FRONTEND_BASE_URL } from '../playwright.config';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -14,18 +14,16 @@ const USERS = SEED.users;
 
 Given(/^我以 manager\.wang\(ORG_ADMIN\) 登入$/, async function (this: FactoryOpsWorld) {
   const user = await loginAs(this, 'manager.wang', USERS['manager.wang'].password);
-  await injectAuthToLocalStorage(this, user.accessToken, user.refreshToken);
+  await injectAuthCookies(this, user.accessToken, user.refreshToken);
   await this.page.goto(`${FRONTEND_BASE_URL}/`);
   await this.page.waitForLoadState('networkidle');
 });
 
 When(/^我以 leader\.chen\(SHIFT_LEAD\) 切換登入$/, async function (this: FactoryOpsWorld) {
   const user = await loginAs(this, 'leader.chen', USERS['leader.chen'].password);
-  await this.page.evaluate(() => {
-    localStorage.removeItem('factory_ops_access_token');
-    localStorage.removeItem('factory_ops_refresh_token');
-  });
-  await injectAuthToLocalStorage(this, user.accessToken, user.refreshToken);
+  // Clear existing auth cookies before injecting new ones for a clean user switch
+  await this.context.clearCookies();
+  await injectAuthCookies(this, user.accessToken, user.refreshToken);
   await this.page.goto(`${FRONTEND_BASE_URL}/`);
   await this.page.waitForLoadState('networkidle');
 });
@@ -271,7 +269,7 @@ Given(
 
 Given(/^我以 leader\.chen 登入$/, async function (this: FactoryOpsWorld) {
   const user = await loginAs(this, 'leader.chen', USERS['leader.chen'].password);
-  await injectAuthToLocalStorage(this, user.accessToken, user.refreshToken);
+  await injectAuthCookies(this, user.accessToken, user.refreshToken);
   await this.page.goto(`${FRONTEND_BASE_URL}/`);
   await this.page.waitForLoadState('networkidle');
 });

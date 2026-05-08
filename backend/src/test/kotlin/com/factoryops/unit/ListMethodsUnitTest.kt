@@ -87,12 +87,12 @@ class ListMethodsUnitTest {
         passwordHasher = mock()
         eventPublisher = mock()
 
-        orgService = OrganizationService(orgRepository, userRepository)
+        orgService = OrganizationService(orgRepository, userRepository, projectRepository, groupRepository)
         groupService = GroupService(groupRepository, groupMembershipRepository, orgRepository, userRepository)
         projectService = ProjectService(projectRepository, membershipRepository, orgRepository, groupRepository, userRepository)
-        taskService = TaskService(taskRepository, projectRepository, groupRepository, userRepository, eventPublisher)
+        taskService = TaskService(taskRepository, projectRepository, groupRepository, groupMembershipRepository, userRepository, eventPublisher)
         dispatchService = DispatchService(actionRequestRepository, orgRepository, userRepository,
-            TaskService(taskRepository, projectRepository, groupRepository, userRepository, eventPublisher), eventPublisher)
+            TaskService(taskRepository, projectRepository, groupRepository, groupMembershipRepository, userRepository, eventPublisher), eventPublisher)
         userService = UserService(userRepository, credentialsRepository, hrClient, passwordHasher)
     }
 

@@ -79,22 +79,75 @@ export async function loginAs(
 }
 
 /**
- * Inject tokens into the browser's localStorage BEFORE navigating,
- * so the React AuthProvider initializes as logged in.
- * Must be called before the first page.goto() on this context.
+ * Inject auth cookies into the Playwright BrowserContext so the browser
+ * automatically sends them on subsequent requests (cookie-based auth, ADR-0015).
+ *
+ * Use this instead of injectAuthToLocalStorage after the M5.5 cookie migration.
+ * The tokens come from the loginAs() response and are set as cookies matching
+ * the backend's Set-Cookie attributes.
  */
-export async function injectAuthToLocalStorage(
+export async function injectAuthCookies(
   world: FactoryOpsWorld,
   accessToken: string,
-  refreshToken: string
+  refreshToken: string,
+  xsrfToken = 'mock-xsrf-token'
 ): Promise<void> {
-  await world.context.addInitScript(
-    ({ a, r }: { a: string; r: string }) => {
-      localStorage.setItem('factory_ops_access_token', a);
-      localStorage.setItem('factory_ops_refresh_token', r);
+  const domain = 'localhost';
+  await world.context.addCookies([
+    {
+      name: 'access_token',
+      value: accessToken,
+      domain,
+      path: '/v1',
+      httpOnly: true,
+      secure: false,
+      sameSite: 'Lax',
     },
-    { a: accessToken, r: refreshToken }
-  );
+    {
+      name: 'refresh_token',
+      value: refreshToken,
+      domain,
+      path: '/v1/auth',
+      httpOnly: true,
+      secure: false,
+      sameSite: 'Lax',
+    },
+    {
+      name: 'XSRF-TOKEN',
+      value: xsrfToken,
+      domain,
+      path: '/v1',
+      httpOnly: false,
+      secure: false,
+      sameSite: 'Lax',
+    },
+  ]);
+}
+
+/**
+ * @deprecated Use injectAuthCookies() instead (M5.5 cookie-based auth).
+ * Kept for backwards compatibility with existing step files that still compile.
+ * The behaviour is now a no-op — cookie-based auth does not use localStorage.
+ */
+export async function injectAuthToLocalStorage(
+  _world: FactoryOpsWorld,
+  _accessToken: string,
+  _refreshToken: string
+): Promise<void> {
+  // No-op: tokens are no longer stored in localStorage (ADR-0015).
+  // Browser cookie jar is populated by the real backend Set-Cookie response
+  // when the step calls loginAs() + page.goto() to the login page, or via
+  // injectAuthCookies() for pre-authenticated scenarios.
+}
+
+/**
+ * Read the XSRF-TOKEN cookie value from the current Playwright BrowserContext.
+ * Returns empty string if the cookie is not found.
+ */
+export async function getXsrfTokenFromCookies(world: FactoryOpsWorld): Promise<string> {
+  const cookies = await world.context.cookies();
+  const xsrf = cookies.find((c) => c.name === 'XSRF-TOKEN');
+  return xsrf?.value ?? '';
 }
 
 // ---------------------------------------------------------------------------

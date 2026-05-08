@@ -1,53 +1,41 @@
-# Code Review Status
+# Code Review STATUS
 
-**狀態**: READY_FOR_BUILDER_FIX(P0 修復後重審)
-**完成日期**: 2026-05-04
-**版本**: M3 backend + frontend(對照 spec v1.3.0)
+**狀態**: ✅ M5 COMPLETED（M5.6.1 review PASS）
+**完成時間**: 2026-05-09
+**負責 agent**: code-reviewer（M5.6.1）
 
-## 摘要
+---
 
-- **整體評分**: 4 / 10(規格與骨架完整,但**安全與多租戶嚴重缺陷,不可上線**)
-- **發現總計**: 65 項
-  - Critical: **8**
-  - High: 18
-  - Medium: 22
-  - Low: 12
-  - Info: 5
+## M5.6.1 複審結果
 
-## 報告
+- **整體評分**: 8.5 / 10
+- **P0（阻擋 release）**: **無**
+- **P1（建議改進，不擋 release）**: 4 條（P1-1 ~ P1-4）
+- **P2（可 defer 到 M6+）**: 7 條
 
-詳見 [code-review-report.md](./code-review-report.md)。
+**結論**: PASS，可進 M5.6.2（doc-devops 收斂 + tag v1.0.0-M5）。
 
-## 給下一棒的指引
+詳細審查報告：`docs/review/m5-review.md`。
 
-**下一棒**: `quarkus-backend-builder`(處理 Must-Fix 1-15 項)
-**doc-devops 暫不啟動**,等 P0 修完再進。
+---
 
-### Must-Fix P0(必須在 M4 內修完)
+## M5 P1 backlog（均已進主 STATUS.md P1 backlog）
 
-1. S-001 — JWT refresh token 簽名驗證
-2. S-002 — 全面補 `@RolesAllowed`
-3. S-003 — Login 帶 rootOrgId
-4. S-004 — User PATCH 限 ORG_ADMIN/ADMIN
-5. S-005 — JWT 私鑰移出 git
-6. S-012 — Repository 全帶 rootOrgId
-7. C-001 — OrganizationService.createOrg 原子化
-8. C-002 — TemplateService 版本單調 + active 檢查 + GLOBAL/ORG 分流
-9. M-003 — 所有 service method 加 `@Transactional`
-10. C-003 — Group settings INV-35 角色白名單
-11. S-006 — MockHrResource `@IfBuildProfile("dev")`
-12. S-008 — Logout 實作 token blacklist
-13. P-001 — 列表 cursor pagination
-14. C-013 / P-003 — Org move ancestorIds propagation
-15. C-016 — EventPublisher 移除 try/catch
+| # | 說明 | 位置 |
+|---|---|---|
+| P1-1 | `LockoutStateWriter` 繞過 repository 抽象 | `LockoutStateWriter.kt:52, 64` |
+| P1-2 | `OutboxPoller.pollAndProcess()` 缺原子性保護 | `OutboxPoller.kt:50, 66-71` |
+| P1-3 | CSRF dual-mode bypass 無強制截止點 | `CsrfFilter.kt:69-73` |
+| P1-4 | OpenAPI runtime info-version 過時 → **已修**（M5.6.2 application.properties bump） | ✅ |
 
-### Re-review 範圍
+---
 
-修完後只需重審:
-- 5 個 Critical(S-001 ~ S-005)是否真的修好
-- RBAC 矩陣 sample 10 個 endpoint 是否 work
-- 不必整份 review 重跑
+## M4 baseline 摘要
 
-### 風險
+M4 code review（2026-05-04）：整體 4/10；65 項發現（8 Critical）；P0 全部於 M4 修完。詳細報告保留於 `docs/review/code-review-report.md`（歷史存檔）。
 
-目前狀態若部署到生產環境,**1 小時內**可被未授權使用者改寫整個系統的角色配置與組織結構。**強烈反對任何形式的 staging beyond local dev**。
+---
+
+## 給下一棒 starter context
+
+M5 review 已完成。M6 code-reviewer 起點為 `docs/review/m5-review.md`（P2 追蹤清單）+ 本棒 M6 新增 diff。

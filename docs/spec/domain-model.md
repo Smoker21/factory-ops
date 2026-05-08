@@ -1,8 +1,14 @@
 # 工廠值班工作管理系統 — 領域模型 (DDD)
 
-**版本**: 1.3.0
-**最後更新**: 2026-05-04
+**版本**: 1.4.0
+**最後更新**: 2026-05-08
 **負責 agent**: spec-architect
+
+> **v1.4 變更摘要**(依使用者於 2026-05-07 規劃會議對 Q-18 ~ Q-24 全套拍板;落地於 sequence note 與狀態機 hedge 移除):
+> - **Q-18**:跨層 dispatch sequence 註腳補強「任一上級 manager 皆可 dispatch,server 沿 ancestry path 驗證」(見 §4.12)
+> - **Q-20**:跨層 dispatch sequence 補一個 reject 分支註記「leaf reject 僅 emit `factory-ops.action-request.rejected` event,不主動推 in-app push」(見 §4.12)
+> - **Q-21**:Task 狀態機 §4.10 移除「Q-21 待確認」註腳,改寫為「reject 清空既往 reviews(v1.4 拍板)」
+> - **Q-23**:狀態機文字「review APPROVED 蒐集完所有 required roles」改為「review APPROVED 達成 auto-complete 條件(白名單成立 + count 滿足 dualSign 要求)」— 詳細語意見 ADR-0011 v1.4 Amendment
 
 > **v1.3 變更摘要**(以 Q-1 ~ Q-17 全套拍板為基礎重整):
 > - **Organization aggregate**:`leaderId`(單值)被取代為 `managerId`(單值,nullable)+ `leaderIds[]`(0..N);詳見 ADR-0010
@@ -646,7 +652,7 @@ classDiagram
 - (沿用 v1.1 / v1.2 invariants)
 - `qaReviewPolicy` snapshot 後不可變;Group settings 後續變更不影響此 Task(INV-31)
 - 若 `qaReviewPolicy.dualSignRequired = true`,`IN_PROGRESS → DONE` 直推被禁止;只能 `IN_REVIEW + review action 蒐集完成 → 自動 DONE`(INV-6 強化)
-- `qaReviews[]` 中 `(reviewerId, role)` 對於同一 Task 必須 unique(INV-36;同 user 不可一次擔多角色簽核)
+- `qaReviews[]` 中 `(reviewerId, role)` 對於同一 Task 必須 unique(INV-36;同 user 同一角色不可重簽避免重覆計數);**同一 user 可以以不同角色多次簽核並各計入一筆**(Q-23 / Q5 B v1.4 拍板,輕量派工確認非品保 GMP 雙簽)
 
 **Domain Events**:沿用 v1.2 + 新增:
 - `factory-ops.task.review-submitted`
@@ -714,8 +720,8 @@ stateDiagram-v2
     IN_PROGRESS --> BLOCKED: block(reason)
     BLOCKED --> IN_PROGRESS: unblock
     IN_PROGRESS --> IN_REVIEW: submitForReview
-    IN_REVIEW --> IN_PROGRESS: review REJECTED(清空既往 reviews)
-    IN_REVIEW --> DONE: review APPROVED 蒐集完所有 required roles → server 自動推進
+    IN_REVIEW --> IN_PROGRESS: review REJECTED(清空既往 reviews,Q-21 v1.4 拍板)
+    IN_REVIEW --> DONE: review APPROVED 達成 auto-complete 條件 → server 自動推進(Q-23 OR 白名單,見 ADR-0011 v1.4)
     IN_PROGRESS --> DONE: complete (僅 dualSignRequired=false 路徑)
     IN_PROGRESS --> DONE: GROUP_MANAGER force-complete (帶 bypassReason)
     OPEN --> CANCELLED: cancel
@@ -725,7 +731,7 @@ stateDiagram-v2
     CANCELLED --> [*]
 ```
 
-> Q-21 待確認:reject 是否清空既往 reviews 仍在預設「清空」;若改保留,僅清掉特定 role review。
+> Q-21 v1.4 拍板:reject 清空既往 `qaReviews[]`,語意「重新走流程」;`history[]` 保留稽核軌跡。
 
 #### ActionRequest(v1.3:無 RELAYED)
 
@@ -795,7 +801,8 @@ sequenceDiagram
     participant SEC as 裝配課的 GROUP_MANAGER
 
     FAB->>API: POST /orgs/{S1}/dispatch-action-request<br/>{ title:"裝射新機台", severity:HIGH, ownerId? }
-    API->>DB: 讀 targetOrg(S1) + 驗證 leaf + 驗證 actor manager scope ⊇ S1
+    Note over FAB,API: Q-18 v1.4 拍板:dispatch 角色不限 root,任一具備<br/>manager 身份的上級節點皆可(server 沿 ancestry 驗證)
+    API->>DB: 讀 targetOrg(S1) + 驗證 leaf + 驗證 actor manager scope 落在 S1 的 ancestry path 上
     API->>API: 計算 ownerId(0/1/N 規則)
     Note over API,DB: 若 leaderIds.length == 0 → 409 target_org_no_leader<br/>若 == 1 → ownerId = leaderIds[0]<br/>若 > 1 → 必須 body.ownerId ∈ leaderIds(否則 422)
     API->>DB: 建立 ActionRequest:<br/>originatingOrgId = FAB(actor 最近的 manager scope ancestor of S1)<br/>targetOrgId = S1<br/>status = SUBMITTED, ownerId = ...
@@ -811,6 +818,13 @@ sequenceDiagram
     API-->>SEC: 201 Created (Task)
 
     Note over FAB,API: 廠長隨時 GET /action-requests/A 查看 status
+
+    alt leaf 端 reject(替代分支)
+        SEC->>API: POST /action-requests/A/status { status: REJECTED, reason }
+        API->>DB: status = REJECTED,history append
+        API->>NATS: emit factory-ops.action-request.rejected
+        Note over API,NATS: Q-20 v1.4 拍板:只 emit event,**不主動推 in-app push**;<br/>originator 透過 NATS / Webhook 訂閱或報表得知
+    end
 ```
 
 ### 4.13 QA 雙簽 Review Sequence(v1.3 新增,對應 ADR-0011)
@@ -825,7 +839,7 @@ sequenceDiagram
     participant DB as MongoDB
     participant NATS as NATS
 
-    Note over Worker,DB: Task created:<br/>qaReviewPolicy = { dualSignRequired:true, requiredReviewerRoles:["QA","SHIFT_LEAD"] }<br/>(snapshot from Group settings)
+    Note over Worker,DB: Task created:<br/>qaReviewPolicy = { dualSignRequired:true, requiredReviewerRoles:["QA","SHIFT_LEAD"] }<br/>(snapshot from Group settings;白名單)
 
     Worker->>API: POST /tasks/{T}/status { status: IN_REVIEW }
     API->>DB: status = IN_REVIEW
@@ -834,14 +848,20 @@ sequenceDiagram
     QA->>API: POST /tasks/{T}/review { decision: APPROVED, role: "QA" }
     API->>DB: append qaReviews[ { QA, APPROVED, ... } ]
     API->>NATS: emit task.review-submitted
-    Note over API,DB: 尚未蒐集完整 required roles(缺 SHIFT_LEAD),狀態仍 IN_REVIEW
+    Note over API,DB: dualSignRequired = true 且 qaReviews.size = 1,尚未達<br/>auto-complete 條件(>= 2);狀態仍 IN_REVIEW
 
     SL->>API: POST /tasks/{T}/review { decision: APPROVED, role: "SHIFT_LEAD" }
     API->>DB: append qaReviews[ { SHIFT_LEAD, APPROVED, ... } ]
-    API->>API: 蒐集完整 → 自動推進 status = DONE
+    Note over API,DB: Q-23 v1.4 OR 白名單:qaReviews.size >= 2 且<br/>所有 reviewerRole ∈ requiredReviewerRoles → auto-complete 成立
+    API->>API: 自動推進 status = DONE
     API->>NATS: emit task.review-submitted + task.completed
     API-->>SL: 200 (Task DONE)
 ```
+
+> **Q-23 OR 白名單情境補充**(v1.4 拍板):上圖示範「不同 role 各一筆」滿足 dualSign,亦可:
+> - **同 role 兩筆**(例:`QA` + `QA`,兩位不同 user 都簽 QA)— 依然滿足 `qaReviews.size >= 2` + 角色都在白名單,**auto-complete 成立**。
+> - **同人不同角色多筆**(例:同一位 user 具備 `QA` + `SHIFT_LEAD` 雙身份,各以不同 role 簽兩筆)— 依然滿足條件,**auto-complete 成立**(Q5 B 拍板,本系統為工廠輕量派工確認,非 GMP 品保雙簽)。
+> - 白名單外的 role(例:`OPERATOR` 簽,但白名單只有 `QA` / `SHIFT_LEAD`)— 寫入時即被拒(422 `role_not_required`)。
 
 ---
 
@@ -1076,4 +1096,4 @@ MVP 階段:
 - 儲存層:UTC `Instant`(BSON Date,毫秒精度)
 - API / 事件 wire format:ISO 8601 + offset(`OffsetDateTime`,例 `2026-05-04T08:30:00+08:00`)
 - 轉換點在 application service / DTO 層,domain layer 內部仍用 UTC
-- Q-24 待確認是否需要在儲存層額外保留發起端原始 offset
+- **Q-24 v1.4 拍板**:儲存層**不**保留發起端原始 offset(不加 `<field>OffsetMinutes` 副欄位);UI 以 root Organization timezone 或使用者瀏覽器 locale 二擇一顯示

@@ -1,11 +1,28 @@
 # 工廠值班工作管理系統 — 需求規格書
 
-**版本**: 1.3.0
-**最後更新**: 2026-05-04
+**版本**: 1.5.0
+**最後更新**: 2026-05-08
 **負責 agent**: spec-architect
 
+> **v1.5 變更摘要**(2026-05-08,M5.1.5 補件 — JWT cookie / CSRF 模型補回 §FR-Auth):
+> M5.3 quarkus-backend-builder 進場做 S-009(JWT 改 httpOnly cookie + CSRF 防護)時觸發 Stuck Protocol,因 §FR-Auth 未描述 cookie / CSRF 模型細節;本期 spec-architect re-engage 將該模型寫進 §FR-1.5 ~ §FR-1.8,並落地 ADR-0015。
+> 1. **§FR-1.5 Refresh token storage**:改 httpOnly + Secure + SameSite=Strict cookie(prod);dev 環境 SameSite=Lax(localhost 跨 port);Cookie Path=`/v1/auth`(限縮可見範圍);Max-Age = 7 天。
+> 2. **§FR-1.6 Access token transport**:雙模兼容(過渡期)— Bearer header(`Authorization: Bearer ...`)與 cookie(`access_token`,httpOnly + Secure + SameSite=Strict;Path=`/v1`)並存;resolver 順序「cookie 優先,fallback Bearer header」;access TTL = 15 分。
+> 3. **§FR-1.7 CSRF protection**:Double-submit cookie pattern;`XSRF-TOKEN` cookie(non-httpOnly,JS 可讀;Secure + SameSite=Strict;Path=`/v1`)+ 必須帶 `X-XSRF-TOKEN` header;不相等 → 403 + RFC 7807 `CSRF_TOKEN_MISMATCH`。GET / HEAD / OPTIONS / `/v1/auth/login` / `/health` 豁免。
+> 4. **§FR-1.8 Cookie lifecycle**:login 設三 cookie;logout 三 cookie 全部 Max-Age=0 清除;refresh 端點優先從 cookie 讀 refresh token,body 仍接受(向前兼容,M5.5 frontend 切完後可在 M6 移除);changePassword 不影響 cookie。
+> 落地 ADR-0015(JWT Cookie + CSRF Model);openapi.yaml 加 `components.parameters.CsrfHeader` + 全 mutating 端點 `$ref` 引用 + 三個 auth 端點 `Set-Cookie` response header 描述。
+
+> **v1.4 變更摘要**(依使用者於 2026-05-07 規劃會議對 Q-18 ~ Q-24 的全套拍板,以 in-place 方式落地 spec / ADR):
+> 1. **Q-18 跨層 dispatch 範圍**:**任一具備 manager 身份的上級節點皆可 dispatch**(不限 root)。Server 沿 Organization 樹驗證 actor 在 targetOrg ancestry path 上(含同節點)的某個 manager scope 即可授權。對應 §FR-Dispatch.1 / §FR-Dispatch.4 改寫;backend `DispatchService.kt` 已符合(已驗證,M5.1 不需 code change)。
+> 2. **Q-19 Manager 休假代理**:**不引入 deputy 欄位**;一切代理透過 `transfer-manager` 在 HR / Operations 流程處理。代理人選由 HR 端決定,本系統不另設介面。對應 §FR-Org.12 字句確認 + ADR-0007 v1.4 Amendment。
+> 3. **Q-20 leaf 端 reject 通知 originator**:**只 emit `factory-ops.action-request.rejected` event,不主動推 in-app push**。對應 §FR-Dispatch.7 字句確認 + ADR-0009 v1.4 Amendment + domain-model.md sequence 補註。
+> 4. **Q-21 QA Review reject 後既往 reviews**:**清空**(進入 IN_PROGRESS 等同流程重啟)。對應 §FR-3.12 字句確認 + ADR-0011 v1.4 Amendment。
+> 5. **Q-22 Group settings versioning**:**不另做專屬 versioning**,沿用 `Group.history[]` append-only 變更紀錄(payload 含 before/after diff)。對應 §FR-Group 字句確認。
+> 6. **Q-23 `requiredReviewerRoles` 語意**:**OR 白名單**(列示中的角色才能簽,但**不要求每一角色都到齊**);`dualSignRequired = true` 仍要求 `qaReviews.size >= 2`,但**角色組合任意**;**同一 user 可以以不同角色多次簽核**(本系統為工廠派工確認,刻意輕量,非品保 GMP 雙簽,Q5 B 拍板)。對應 §FR-3.12 改寫 + INV-36 改寫 + ADR-0011 v1.4 Amendment(關鍵 Amendment)。
+> 7. **Q-24 儲存層原始 offset**:**不保留**發起端 offset;UI 以 root Organization timezone(或使用者瀏覽器 locale)二擇一顯示,不另存 `<field>OffsetMinutes` 副欄位。對應 §4 NFR 時區行字句確認 + §FR-Notification.4 註腳改寫。
+
 > **v1.3 變更摘要**(依使用者於 §8 對 Q-1 ~ Q-17 的拍板回答全套重整;§1 不動):
-> 1. **跨層派工改為 Single-hop Direct Dispatch to Leaf**(Q-14):刪除「多層 Relay」流程;`targetOrgId` 必為 leaf;ActionRequest 移除 `relayChain[]` 與 `RELAYED` 子狀態;對應端點 `/relay` 移除。**任一上級 manager**(不限 root)皆可 dispatch 到其子孫中的 leaf,但留 Q-18 待最終確認。
+> 1. **跨層派工改為 Single-hop Direct Dispatch to Leaf**(Q-14):刪除「多層 Relay」流程;`targetOrgId` 必為 leaf;ActionRequest 移除 `relayChain[]` 與 `RELAYED` 子狀態;對應端點 `/relay` 移除。**任一上級 manager**(不限 root)皆可 dispatch 到其子孫中的 leaf(Q-18 已於 v1.4 拍板,見 v1.4 摘要第 1 點)。
 > 2. **Organization 改為「單 Manager + 多 Leaders」**(Q-15):每節點 `managerId`(單值)+ `leaderIds[]`(0..N);ActionRequest 預設 ownerId 規則重寫(0 → 409、1 → 自動、N → 派工方指定);`ORG_MANAGER` 角色綁定改為「該 user 是某節點 `managerId`」衍生而來;新 ADR-0010。
 > 3. **Group 加 `settings.qa` 雙簽機制**(Q-7):`dualSignRequired` + `requiredReviewerRoles[]`;Task 建立時 snapshot 該 policy(不受 Group settings 後續變更影響);新增 `POST /tasks/{taskId}/review` action;新 ADR-0011。
 > 4. **跨組協作禁止**(Q-13):刪除「在 RBAC 允許下跨 leaf 共組」字眼;Project `groupIds[]` 必須屬於 Project 自身的同一個 leaf Org;US-A5 改寫(夜班 Group 為同 SECTION 內的 SHIFT 型 Group)。
@@ -14,7 +31,7 @@
 > 7. **每日工作看板**(Q-8):新增 FR-Frontend 章節定義 Daily Work Board 內容(my owned / my assigned / overdue / pending review)。
 > 8. **多語系 i18n 策略更新**(Q-17):root locale + 使用者瀏覽器 locale 二擇一;不做 GLOBAL Template `name_zh` / `name_en` 等多欄位設計。
 > 9. **角色描述更新**:`ORG_MANAGER` 改為「節點唯一一位」,描述對齊 Q-15。
-> 10. **Open Questions 整理**:Q-1 ~ Q-17 全部標**拍板**並補完整中文敘述;新增 Q-18 ~ Q-24 待用戶確認的衍生問題。
+> 10. **Open Questions 整理**:Q-1 ~ Q-17 全部標**拍板**並補完整中文敘述;Q-18 ~ Q-24 於 v1.4 拍板(見本檔頂部 v1.4 變更摘要)。
 
 ---
 
@@ -51,7 +68,7 @@
 > **v1.3 對 §1 的補充說明(註,不變動 §1 本體)**:
 > - §1.2 第 4 個情境「廠長 → 部門經理 → 課長」於 Q-14 拍板後在系統內**模型化為單跳直派**(target = 課,originating = FAB);中間管理層的「人鏈傳達」屬訊息流,由 NATS event 訂閱與報表呈現,不做 relay 狀態欄位。詳見 ADR-0008。
 > - §1.3 末段「組織負責人」於 Q-15 拍板後語意為「`leaderIds[]` 之一」;當 leader 多人時派工方須指定 ownerId,單人時自動,0 人則回 409。詳見 ADR-0010。
-> - §1.3 末段「指定的代理人」目前以 Operations 流程(休假時 `transfer-manager` 暫代,結束再轉回)實現;不引入正式 `deputy` 欄位。Q-19 待用戶最終確認。
+> - §1.3 末段「指定的代理人」以 Operations 流程(休假時 `transfer-manager` 暫代,結束再轉回)實現;**不引入正式 `deputy` 欄位**(Q-19 v1.4 拍板;代理人選由 HR 端決定)。
 
 ---
 
@@ -65,7 +82,7 @@
 | `QA` | 品保 | 異常案件複核、完工驗收;Group 啟用 QA 雙簽時擔任 reviewer |
 | `GROUP_ADMIN` | 群組管理員 | Group 內 Template 選用、人員與其角色管理、**Group settings(含 QA 雙簽)維護**;**僅作用於該 Group**(必為 leaf Org 下的 Group) |
 | `GROUP_MANAGER` | 群組經理 | Group 經理,可指派 `GROUP_ADMIN` 代理人,其餘權限等於 `GROUP_ADMIN`;為 Group 對外的工作接口(收 ActionRequest、拆解派 Task);**負責 Group settings(含 QA 雙簽)的最終設定權** |
-| `ORG_MANAGER` | 組織經理 | **某個 Organization 節點(任一層)的唯一經理**(該節點 `managerId == 該 user.id`);有權對**該節點及其子孫中的 leaf Org** 直接派 ActionRequest;對應 §1.3「上級組織的 Manager」 |
+| `ORG_MANAGER` | 組織經理 | **某個 Organization 節點(任一層,Q-18 拍板不限 root)的唯一經理**(該節點 `managerId == 該 user.id`);有權對**該節點及其子孫中的 leaf Org** 直接派 ActionRequest;對應 §1.3「上級組織的 Manager」 |
 | `ORG_ADMIN` | 組織管理員 | 管理該 Organization 樹下的 User / Group / Template / 系統設定 / Org 節點之 manager 與 leaders;**不能跨 Organization** |
 | `ADMIN` | 系統管理員 | 全系統(跨 Organization)使用者與設定;**僅 SaaS 維運使用**;唯一可維護**全域 Template 庫**的角色 |
 
@@ -102,7 +119,7 @@
 - **FR-Org.10** ORG_ADMIN 可調整 root Organization 的 `settings`(例:`orgMaxDepth`、預設 `dueAt` 工時、附件大小上限)。
 - **FR-Org.11** **不能成環**:`parentId` 鏈往上不可遇到自己;`parentId` 必須與本節點同 `rootOrgId`。
 - **FR-Org.12** **Manager 與 Leaders 操作**(對應 ADR-0010):
-  - `POST /orgs/{orgId}/transfer-manager`(ORG_ADMIN / ADMIN)— 變更 `managerId`(包含設置、轉移、清空)。
+  - `POST /orgs/{orgId}/transfer-manager`(ORG_ADMIN / ADMIN)— 變更 `managerId`(包含設置、轉移、清空)。**Q-19 拍板:Manager 休假代理機制**透過 `transfer-manager` 暫代(休假結束再轉回),**不引入 `deputyManagerId` 欄位**;代理人選由 HR / Operations 流程決定(若 HR 服務本身有代理人欄位,本系統視為 HR 端負責,不在 Factory Ops 系統建模)。
   - `GET  /orgs/{orgId}/leaders` / `POST /orgs/{orgId}/leaders` / `DELETE /orgs/{orgId}/leaders/{userId}`(ORG_ADMIN / ADMIN)— 維護 `leaderIds[]`。
   - 每次變動皆寫入 `Organization.history[]` 並 emit Domain Event。
 - **FR-Org.13** 系統設計詳見 **ADR-0004**(Org 樹 + 平面 Group)、**ADR-0005**(多租戶)、**ADR-0010**(單 manager + 多 leaders)。
@@ -133,6 +150,7 @@
   - `PATCH /orgs/{orgId}/groups/{groupId}/settings`(GROUP_MANAGER / GROUP_ADMIN)。
   - 寫入時驗證:若 `qa.dualSignRequired = true` 則 `qa.requiredReviewerRoles[]` 不可為空(回 422);角色清單僅允許第一線角色(`OPERATOR` / `SHIFT_LEAD` / `ENGINEER` / `QA` / `GROUP_ADMIN` / `GROUP_MANAGER`),不接受 `ADMIN` / `ORG_ADMIN`。
   - **變更不影響進行中 Task**(Task 建立時 snapshot 該 policy,見 FR-3.x)。
+  - **Q-22 拍板:Group settings 不另做專屬 versioning**;每次變更寫入 `Group.history[]`(append-only,payload 含 before / after diff)即可,稽核可追溯但不另建 version chain。
 
 ### FR-User-HR HR 整合與使用者投影
 
@@ -171,16 +189,16 @@
 
 ### FR-Dispatch 跨層派工(上級 Org → 下級 leaf Org)— v1.3 全面重寫
 
-- **FR-Dispatch.1** **派工角色**:任一 Organization 節點的 `managerId`(即該節點唯一的 ORG_MANAGER)可向**該節點底下子孫節點中,任一 leaf Organization** 派 ActionRequest。**不限 root,任一上級皆可派**(對應 §1.3「上級組織的 Manager」字面;留 Q-18 待最終確認)。
+- **FR-Dispatch.1** **派工角色**(Q-18 拍板):**任一** Organization 節點的 `managerId`(即該節點唯一的 ORG_MANAGER)可向**該節點底下子孫節點中,任一 leaf Organization** 派 ActionRequest。**不限 root,任一具備 manager 身份的上級節點皆可派**;授權判定為 **server 沿 Organization 樹驗證 actor 在 targetOrg 的 ancestry path 上(含同節點)持有某個 manager scope** — 詳見 FR-Dispatch.4 與 ADR-0008。
 - **FR-Dispatch.2** **派工 API**:`POST /orgs/{targetOrgId}/dispatch-action-request`,body 包含 `title`、`descriptionMarkdown`、`severity`、`attachments[]`、`dueAt`(可選)、`ownerId`(條件必填,當 targetOrg `leaderIds.length > 1` 時必填)。
 - **FR-Dispatch.3** **預設 Owner 規則**(對應 ADR-0010):
   - `targetOrg.leaderIds.length == 0` → 回 409 `target_org_no_leader`(要求先指派 leader)
   - `targetOrg.leaderIds.length == 1` → server 自動 `ownerId = leaderIds[0]`
   - `targetOrg.leaderIds.length >= 2` → 派工方須在 body 指定 `ownerId`,且必須 ∈ `leaderIds`;未指定回 422 `owner_must_be_specified`,不在集合中回 422 `owner_not_in_leaders`
-- **FR-Dispatch.4** **目標範圍**:`targetOrgId` **必須是 leaf Organization**(`type ∈ root.settings.leafTypes`);否則回 422 `target_must_be_leaf`。同時 `targetOrgId` 必須是 actor 某個 manager scope 節點的子孫(含相同節點,即 leaf 的 manager 對自己 leaf 派);否則回 403 `not_authorized_to_dispatch`。
+- **FR-Dispatch.4** **目標範圍**(Q-18 拍板):`targetOrgId` **必須是 leaf Organization**(`type ∈ root.settings.leafTypes`);否則回 422 `target_must_be_leaf`。同時 server 必須沿 Organization 樹驗證:**actor 持有的某個 manager scope 必須出現在 targetOrg 的 ancestry path 上(含 targetOrg 本身)** — 即 actor 是 targetOrg 自己的 manager 或任一上級節點的 manager 即合法,**不限 root**;否則回 403 `not_authorized_to_dispatch`。
 - **FR-Dispatch.5** **接收與拆解**:`targetOrg` 為 leaf,該 leaf Org 的 `GROUP_MANAGER` / `GROUP_ADMIN` 將 ActionRequest 透過既有 `convert-to-task` 流程轉成一或多個 Task,Task 屬於該 leaf Org 下的 Group。**不再有「relay 到下一級」流程**(已刪除)。
 - **FR-Dispatch.6** **狀態追蹤**:跨層 ActionRequest 走 `SUBMITTED → TRIAGED → IN_PROGRESS → RESOLVED / REJECTED`(無 RELAYED);發派者(originating Org 的 manager)可透過 `originatingOrgId` 全程追蹤進度。
-- **FR-Dispatch.7** **Reject 退回**:leaf 端 `GROUP_MANAGER` / `GROUP_ADMIN` 可 reject(`status = REJECTED`),emit `factory-ops.action-request.rejected`;**是否要主動通知 originator** 列為 Q-20 待確認(MVP 預設只 emit event)。
+- **FR-Dispatch.7** **Reject 退回**(Q-20 拍板):leaf 端 `GROUP_MANAGER` / `GROUP_ADMIN` 可 reject(`status = REJECTED`),emit `factory-ops.action-request.rejected`。**系統不主動推送 in-app push notification 給 originator**;originator 透過 NATS / Webhook 訂閱 / 報表自行得知,符合 §FR-Notification.1 雙通道策略。詳見 ADR-0009 v1.4 Amendment。
 - **FR-Dispatch.8** 設計詳見 **ADR-0008**(v1.3 全面改寫:Single-hop Direct Dispatch)。
 
 ### FR-Notification 通知策略:NATS 與 Webhook(Q-5 拍板)
@@ -218,7 +236,7 @@
     "payload": { /* event-specific */ }
   }
   ```
-  > 注意:`occurredAt` 為 ISO 8601 with offset(對應 Q-17 拍板);內部儲存仍為 UTC `Instant`,offset 由 publisher 依 root tz 轉換。
+  > 注意:`occurredAt` 為 ISO 8601 with offset(對應 Q-17 拍板);內部儲存仍為 UTC `Instant`,offset 由 publisher 依 root Organization timezone 轉換(**Q-24 拍板:不保留發起端原始 offset**)。
 - **FR-Notification.5** **送達保證**:NATS 至少一次(at-least-once);Webhook 失敗指數退避重試(1m / 5m / 30m / 2h / 6h,最多 5 次),最終死信記錄到 `webhook_dead_letters`。
 - **FR-Notification.6** **冪等**:消費端以 `eventId` 去重(server 保證同 `eventId` 不重發,但訂閱端仍應做去重)。
 - **FR-Notification.7** **行動 App 推播**:Q-10 拍板採 APNs(iOS);Android 後續以 FCM 補充。本期僅預留訂閱介面與 webhook,實際 APNs gateway 留待後續實作。
@@ -229,6 +247,55 @@
 - **FR-1.2** 支援登出(blacklist refresh token)。
 - **FR-1.3** 支援密碼變更、重設(由 ORG_ADMIN / ADMIN 觸發暫時密碼);若整合 SSO 則由 HR / IDP 接管(MVP 暫不實作)。
 - **FR-1.4** 預留 **SSO/LDAP/HR-SSO** 介接點(暫不實作)。
+
+> **以下 §FR-1.5 ~ §FR-1.8 為 v1.5 補件**(M5.1.5,2026-05-08),為 S-009「JWT 改 httpOnly cookie」實作前提;模型詳細 rationale 與替代方案見 **ADR-0015**。
+
+- **FR-1.5** **Refresh token storage(httpOnly cookie)** —
+  - Server 於 `POST /v1/auth/login` 與 `POST /v1/auth/refresh` 成功響應時,以 `Set-Cookie` 設定 `refresh_token` cookie,屬性如下:
+    - `HttpOnly`(JS 不可讀,擋 XSS 取 token)
+    - `Secure`(僅 HTTPS;dev 環境 localhost 例外見下)
+    - `SameSite=Strict`(prod);**dev 環境**(`quarkus.profile != prod`)允許 `SameSite=Lax` 以解決 localhost 跨 port(frontend `:5173` ↔ backend `:8080`)無法帶 cookie 的問題
+    - `Path=/v1/auth`(僅 auth 端點看得到此 cookie,降低對其他端點的曝光面)
+    - `Max-Age` = refresh token TTL,預設 **7 天**(具體 application property key 由 backend 實作決定,可由 application.properties / env 覆寫)
+  - `POST /v1/auth/refresh` **優先從 cookie 讀取** refresh token;若 cookie 不存在則 fallback 到 request body `{ "refreshToken": "..." }`(向前兼容,M5.5 frontend 切換完成後,**可於 M6 移除 body 接收路徑**)。
+  - `POST /v1/auth/logout` 響應將 `refresh_token` 設為 `Max-Age=0` 清除;同時撤銷 refresh token jti(現行 §FR-1.2 黑名單機制不變)。
+- **FR-1.6** **Access token transport(雙模兼容,過渡用)** —
+  - **Bearer header 模式**(舊):client 帶 `Authorization: Bearer <accessToken>` header;`/v1/auth/login` 響應 body 仍回 `accessToken`(`TokenPair` schema 不變),M5.5 frontend 切換 cookie 模式前繼續可用。
+  - **Cookie 模式**(新):server 於 login / refresh 成功響應另設 `access_token` cookie:
+    - `HttpOnly` + `Secure` + `SameSite=Strict`(dev:`SameSite=Lax`)
+    - `Path=/v1`(全 API 範圍可見,因 access token 用於授權所有受保護端點)
+    - `Max-Age` = access token TTL,預設 **900 秒(15 分)**(具體 application property key 由 backend 實作決定;對 SmallRye JWT 而言注意:**驗證的有效期視窗**與**簽發的 lifespan** 是兩個不同 property,backend builder 須正確選用 issuance lifespan)
+  - **Resolver 順序**(server 端 JWT extraction filter):**cookie `access_token` 優先**;若不存在則 fallback `Authorization: Bearer ...` header;兩者皆無 → 401。
+  - **同時帶不同 token**(cookie + header 內容不同):server **以 cookie 為準**,header 忽略(避免 ambiguity)。M6 cookie 全面切換後,Bearer header 接收路徑可移除。
+- **FR-1.7** **CSRF protection(double-submit cookie pattern)** —
+  - Server 於 `POST /v1/auth/login` 與 `POST /v1/auth/refresh` 成功響應時,以 `Set-Cookie` 設定 `XSRF-TOKEN` cookie:
+    - **`HttpOnly` 必為 false**(client 端 JS 必須能讀,以填入 request header)
+    - `Secure` + `SameSite=Strict`(dev:`SameSite=Lax`)
+    - `Path=/v1`
+    - `Max-Age` 同 access token TTL(15 分;每次 refresh / login 重新發)
+    - 內容為 server 產生的隨機 nonce(SecureRandom,長度 ≥ 32 bytes,base64url 編碼)
+  - 所有 mutating request(`POST` / `PATCH` / `PUT` / `DELETE`)**必須**同時帶:
+    1. `XSRF-TOKEN` cookie(瀏覽器自動帶)
+    2. `X-XSRF-TOKEN` header(client 端 JS 讀 cookie 後手動填)
+  - Server-side filter **逐字比對 cookie ↔ header**:**必須完全相等**才放行;不相等(含 header 缺漏 / cookie 缺漏 / 兩者都缺)→ **403 Forbidden** + `application/problem+json` body,`title=CSRF_TOKEN_MISMATCH`、`detail` 描述哪一邊缺漏(避免洩漏實際 nonce)。
+  - **CSRF 豁免清單**:
+    - 所有 `GET` / `HEAD` / `OPTIONS` 請求(read-only,SameSite=Strict 已擋外站發送)
+    - `POST /v1/auth/login`(尚未持有 cookie,無從 double-submit;改靠 rate-limit + lockout 防爆破)
+    - `GET /q/health` / `GET /v1/health`(public,無認證)
+  - **未豁免清單**:`POST /v1/auth/refresh`、`POST /v1/auth/logout` **均屬 mutating**,雖 endpoint 用於 auth,仍須帶 `X-XSRF-TOKEN`(login 後即持有 cookie,可正常 double-submit)。
+- **FR-1.8** **Cookie lifecycle 行為總表** —
+
+  | 端點 | refresh_token cookie | access_token cookie | XSRF-TOKEN cookie | Body 變動 |
+  |---|---|---|---|---|
+  | `POST /v1/auth/login` 200 | Set(7d) | Set(15m) | Set(15m) | 仍回 `TokenPair`(向前兼容) |
+  | `POST /v1/auth/refresh` 200 | Set(rotate;新 jti,7d) | Set(15m) | Set(15m,rotate) | 仍回 `TokenPair` |
+  | `POST /v1/auth/logout` 204 | Max-Age=0 清除 | Max-Age=0 清除 | Max-Age=0 清除 | 無 |
+  | `PUT /v1/auth/password` 204 | 不變(避免登出全裝置) | 不變 | 不變 | 無 |
+  | 其他成功 mutating(`POST /v1/...` 等) | 不變 | 不變 | 不變 | 無 |
+  | 401 / 403 / 429 失敗 | 不變 | 不變 | 不變 | 無 |
+
+  - **rotate 語意**:refresh 時舊 refresh jti 立即加入黑名單,並發新 jti(防 replay);access token + XSRF-TOKEN 同步重發(維持壽命一致)。
+  - **跨裝置考量**:logout 僅清本裝置 cookie + 撤銷該 refresh jti;若需「全裝置登出」(改密碼後常見) → 由 `PUT /v1/auth/password` 觸發 server 端 user-scoped jti 黑名單(本期不改 password 行為,維持「不影響 cookie」;M6 視需求補強)。
 
 ### FR-2 Project 管理
 - **FR-2.1** `GROUP_ADMIN` / `GROUP_MANAGER` / `SHIFT_LEAD`(在所屬 Group 內)可建立 Project,設定名稱、描述(markdown)、起訖時間、負責人(`ownerId`)、成員(`memberIds`)、所屬 Group(`groupIds[]`,至少 1 個,**必須屬於 Project 自身的同一個 leaf Org**)。
@@ -256,16 +323,22 @@
 - **FR-3.9** 支援 `dueAt`(到期時間)、`startAt`、`completedAt`,皆為 UTC `Instant`,API 傳輸時以 ISO 8601 + offset 呈現。
 - **FR-3.10** 變更負責人(`transferOwner`)為獨立 API,需要記錄原因與歷程。
 - **FR-3.11** **`POST /tasks` 可帶 `fromTemplateId` + `fromTemplateScope`**,從 TaskTemplate clone(含預填 attributes、checklist、附件提示);GLOBAL scope 範本可直接引用。
-- **FR-3.12** **QA 雙簽 review 流程**(對應 ADR-0011 與 Q-7):
-  - **Snapshot at Task Creation**:Task 建立時(含 ActionRequest convert),server 從所屬 Project 的所有 `groupIds[]` 對應 Group `settings.qa` 計算合併 policy(`dualSignRequired = OR(...)`、`requiredReviewerRoles = ⋃(...)` 取聯集去重),寫入 `task.qaReviewPolicy: { dualSignRequired, requiredReviewerRoles[], snapshotAt, sourceGroupIds[] }`。
+- **FR-3.12** **QA 雙簽 review 流程**(對應 ADR-0011 與 Q-7;**Q-21 / Q-23 拍板於 v1.4**):
+  - **Snapshot at Task Creation**:Task 建立時(含 ActionRequest convert),server 從所屬 Project 的所有 `groupIds[]` 對應 Group `settings.qa` 計算合併 policy(**多 Group 合併**:`dualSignRequired = OR(各 group)`、`requiredReviewerRoles = ⋃(各 group)` 取聯集去重),寫入 `task.qaReviewPolicy: { dualSignRequired, requiredReviewerRoles[], snapshotAt, sourceGroupIds[] }`。
   - **Group settings 後續變更不影響已存在 Task**(對應 INV-31)。
   - **Review Action API**:`POST /tasks/{taskId}/review { decision, role, reason? }`
     - decision: `APPROVED` / `REJECTED`
-    - role: reviewer 主張這次以哪個角色 review,必須 ∈ `task.qaReviewPolicy.requiredReviewerRoles`
-    - 驗證:task.status == `IN_REVIEW`、actor 具該 role、actor 對 task 有 R 權限、(taskId, reviewerId, role) 不可重複(否則 409)
-    - APPROVED:append `qaReviews[]` 一筆;若已蒐集 policy 要求的所有 role 則 server 自動推進 status 為 `DONE` + emit `factory-ops.task.completed`
-    - REJECTED:append + status 回退至 `IN_PROGRESS`(預設清空既往 reviews,語意「重新走流程」;Q-21 待確認此預設行為)
-  - **AND 語意**(對應 ADR-0011 §2):`requiredReviewerRoles` 中**每個角色都需有人簽核**才算過關;同一 user 不可一次同時擔任多角色簽核。Q-23 待確認 OR 替代語意。
+    - role: reviewer 主張這次以哪個角色 review,**必須 ∈ `task.qaReviewPolicy.requiredReviewerRoles`(白名單)**;不在白名單則 422
+    - 驗證:`task.status == IN_REVIEW`、actor 具該 role、actor 對 task 有 R 權限、`(taskId, reviewerId, role)` 不可重複(否則 409)
+    - APPROVED:append `qaReviews[]` 一筆;**若 auto-complete 條件成立則 server 自動推進 status 為 `DONE`**(條件見下「Q-23 OR 語意」)+ emit `factory-ops.task.completed`
+    - **REJECTED**(Q-21 拍板):append history + **清空 `qaReviews[]`**(語意「重新走流程」)+ status 回退至 `IN_PROGRESS` + emit `factory-ops.task.review-rejected`。`history[]` 仍保留所有 review 動作的稽核軌跡(append-only)。
+  - **Q-23 OR 白名單語意**(v1.4 拍板,**取代** v1.3 AND 語意;見 ADR-0011 v1.4 Amendment):
+    - `requiredReviewerRoles` 是「**白名單**」,規定**誰有資格簽**,但**不要求每個列示角色都到齊**。
+    - **Auto-complete 條件**:`(qaReviewPolicy.dualSignRequired ? qaReviews.size >= 2 : qaReviews.size >= 1)` 且 **所有 `qaReviews[].reviewerRole ∈ requiredReviewerRoles`**(後者由白名單驗證在每筆寫入時即保證)。
+    - **角色組合任意**:`dualSignRequired = true` 時可同 role 兩筆(白名單內任一皆可),也可不同 role 各一筆。
+    - **同一 user 可以多次簽核**(以不同 role 各記一筆,計入 `qaReviews.size`):本系統為**工廠派工輕量確認**,**非 GMP 品保雙簽**,允許同人多角色簽以降低值班人力負擔(2026-05-07 Q5 B 拍板)。
+    - `(taskId, reviewerId, role)` 仍 unique(同一人同一角色不可重簽,避免重覆計數)。
+    - 完整 audit log / `qaReviews[]` append-only history 保留(輕量但可追溯)。
   - **Bypass force-complete**:GROUP_MANAGER 可透過 `POST /tasks/{taskId}/status` 強制設為 `DONE`,但須附 `bypassReason`,history 記錄,event 帶 `bypassed: true`。
 
 ### FR-4 ActionRequest(動作需求)— v1.3 簡化
@@ -332,7 +405,7 @@
 | **效能** | 列表 API p95 < 300 ms(回 50 筆),單筆讀取 p95 < 100 ms;Org 樹查詢 p95 < 200 ms(深度 ≤ 5) |
 | **可用性** | 工廠 7×24 運轉,目標 99.5%,計畫停機需在交班空檔 |
 | **行動友善** | 觸控目標 ≥ 44px,支援戴手套操作;3G 網速下首頁 < 3 秒 |
-| **時區** | **儲存層**所有時間以 UTC `Instant` 儲存(可索引、可運算);**API 傳輸**與**事件 payload** 一律使用 ISO 8601 + offset(例 `2026-05-04T08:30:00+08:00`,Q-17 拍板);UI 顯示由前端依「使用者瀏覽器 locale」或「root Organization `timezone`」二擇一(預設後者)轉換 |
+| **時區** | **儲存層**所有時間以 UTC `Instant` 儲存(可索引、可運算);**API 傳輸**與**事件 payload** 一律使用 ISO 8601 + offset(例 `2026-05-04T08:30:00+08:00`,Q-17 拍板);UI 顯示由前端依「使用者瀏覽器 locale」或「root Organization `timezone`」二擇一(預設後者)轉換;**Q-24 拍板:儲存層不另行保留發起端原始 offset**(不加 `<field>OffsetMinutes` 副欄位),offset 僅在 wire format 上呈現 |
 | **多語系** | 介面預留 i18n,預設 root Organization `locale`(`zh-TW`),後續可擴 en-US / vi-VN(東南亞廠);**字串內容欄位**(name / description / 留言…)允許 **Unicode 混合輸入**(中、英、越南、印尼、韓、日…),**不做多語系欄位設計**(Q-17 拍板取消 GLOBAL Template `name_zh` / `name_en` 設計) |
 | **安全** | 全端 HTTPS、JWT 簽章、密碼 bcrypt、敏感欄位不入 log、輸入驗證、跨 root org 隔離、Webhook HMAC 簽章 |
 | **稽核** | 所有寫入操作可追溯到單一使用者(必有 `actorId`);**保留 7 年,3 年以上冷儲存**(Q-9 拍板) |
@@ -383,7 +456,7 @@
 | INV-33 | **Organization `managerId` / `leaderIds[]` 中的 user 必須與 Organization 同 `rootOrgId` 且 `active = true`**;若 user 軟刪或離職,需先 transfer-manager / 移除 leader 才允許其 deactivate(reactor 自動處理移除) |
 | INV-34 | **`User.orgManagerScopes[]` 為衍生 / cache 欄位**;權威來源是 `Organization.managerId == userId` 反查;不可由前端直接寫入 |
 | INV-35 | **Group settings 寫入時**:若 `qa.dualSignRequired = true` 則 `qa.requiredReviewerRoles[]` 不可為空;角色清單只允許第一線角色(`OPERATOR` / `SHIFT_LEAD` / `ENGINEER` / `QA` / `GROUP_ADMIN` / `GROUP_MANAGER`),否則 422 |
-| INV-36 | **同一 user 不可同時以多個角色滿足同一個 Task 的 review 要求**(`qaReviews[]` 中 `(reviewerId, role)` unique;若 user 具備兩個 required role,需以兩位不同 user 各自簽一筆) |
+| INV-36 | **`qaReviews[]` 中 `(reviewerId, role)` unique**(同一 user 同一角色不可重簽,避免重覆計數);**同一 user 可以以不同角色多次簽核並各計入一筆 qaReviews**(本系統為工廠派工輕量確認,非 GMP 品保雙簽;Q-23 / Q5 B 拍板於 v1.4) |
 
 ---
 
@@ -535,7 +608,9 @@
 
 ---
 
-## 8. 待使用者確認的問題 (Open Questions)
+## 8. Open Questions 拍板紀錄(歷史檔案)
+
+> v1.4 後 Q-1 ~ Q-24 全部拍板;本章保留拍板紀錄供稽核 / 跨時間溝通。新衍生問題改進入對應 ADR 或 spec amendment。
 
 ### 8.1 已拍板問題(Q-1 ~ Q-17)
 
@@ -547,29 +622,29 @@
 | Q-4 | **貼圖 (sticker) 集合是否要做?** | 資源管理 | **拍板:本期不做 Sticker**;若需要表情可使用 markdown 內 Unicode emoji 字符。整份規格已移除「sticker」設計細節。 |
 | Q-5 | **逾期通知策略**? | 通知服務 | **拍板:不做逾期定時掃描;改以 Domain Event + NATS(JetStream)+ Webhook(HMAC-SHA256 簽章)雙通道散播**;逾期僅作為前端衍生欄位。詳見 ADR-0009。 |
 | Q-6 | **跨廠多租戶**? | 全資料模型 | **拍板:正式採用 `rootOrgId` 多 Organization 設計**,所有資料 root-org-scoped,索引第一欄為 `rootOrgId`,JWT 帶 `rootOrgId` + `orgPath[]`。詳見 ADR-0005。 |
-| Q-7 | **Task 完成驗收是否需要 QA 雙簽?** | 工作流 | **拍板:由 GROUP_MANAGER 在 Group settings 設定**(`settings.qa.dualSignRequired`、`settings.qa.requiredReviewerRoles[]`)。Task 建立時 snapshot 該 policy,設定後續變更**不影響**已存在 Task。AND 語意(列示中每個角色都需簽核;多 Group 合併規則為聯集)。詳見 ADR-0011 與 INV-31 / INV-35 / INV-36。**衍生 Q-21 / Q-23 待最終確認 reject 行為與 OR 替代語意**。 |
+| Q-7 | **Task 完成驗收是否需要 QA 雙簽?** | 工作流 | **拍板:由 GROUP_MANAGER 在 Group settings 設定**(`settings.qa.dualSignRequired`、`settings.qa.requiredReviewerRoles[]`)。Task 建立時 snapshot 該 policy,設定後續變更**不影響**已存在 Task。**v1.4 採 OR 白名單語意**(`requiredReviewerRoles` 規定誰有資格簽,不要求每角色到齊;`dualSignRequired = true` 時要求 `qaReviews.size >= 2`,角色組合任意;**同人可多角色簽**,Q5 B 拍板)。**多 Group 合併規則**:`dualSignRequired = OR(各 group)`、`requiredReviewerRoles = ⋃(各 group)` 聯集去重(此 OR 是合併不同 Group 的 policy,與 Q-23 OR 白名單語意為**兩件不同事**)。詳見 ADR-0011(含 v1.4 Amendment)與 INV-31 / INV-35 / INV-36。 |
 | Q-8 | **看板 (Kanban) / 甘特圖**是否要做? | 前端範圍 | **拍板:不做甘特圖;只做每日工作看板(Daily Work Board)**(my owned / my assigned / overdue / pending review 四區塊)。詳見 §FR-Frontend.1。 |
 | Q-9 | **資料保留期限**? | 維運 | **拍板:稽核資料保留 7 年(法遵需求);超過 3 年的歷史資料以資料庫匯出做冷儲存**(降低主庫負擔)。實作上以 archiving job 定期將 `history[]` 中超過 3 年的 entry 匯出為冷儲存格式(參考 ADR-DevOps 後續訂)。 |
 | Q-10 | **行動 App 推播管道**? | 通知服務 | **拍板:iOS 採 APNs;Android 後續以 FCM 補充**(本期僅預留 webhook 訂閱介面,實際 push gateway 留待 Mobile App 實作里程碑)。 |
 | Q-11 | **Template 是否跨 Org 共享?** | Template / 多租戶 | **拍板:Template 庫由 ADMIN 設定為 GLOBAL scope,可加多組 tag**(如 `safety` / `monthly` / `equipment`),各 Org 可**直接實例化**或 **fork 為 ORG scope** 後獨立演進(version chain 脫鉤)。詳見 ADR-0006。 |
 | Q-12 | **Org 樹深度與「只有第一層組織可以設定工作」釐清** | Organization | **拍板:深度上限預設 5(由 root settings 控制);「第一層組織」一詞指 leaf 層**(預設 SECTION,可由 root settings.leafTypes 擴充);只有 leaf type 的 Organization 可承載 Group / Project / Task。 |
 | Q-13 | **跨 leaf Org 的 Project 是否允許?** | 跨組協作 | **拍板:跨組協作不會發生**。Project 必須屬於唯一 leaf Org;`groupIds[]` 中所有 Group **必須屬於 Project 自身的同一個 leaf Org**(`Group.organizationId == Project.organizationId`)。完全刪除 v1.2「在 RBAC 允許下跨 leaf 共組」字眼;對應 INV-19 強化、US-A5 改寫(夜班 Group 改為同 SECTION 內 SHIFT 型 Group)。 |
-| Q-14 | **「第一層組織」雙關詞最終釐清**:工作層是 root 還是 leaf? | Organization | **拍板:Leaf 才能工作,Root 只會指派 ActionRequest 到 Leaf**。導出兩個重大設計變動:(a) ActionRequest `targetOrgId` 必須是 leaf;(b) 移除「逐層 Relay 鏈」流程,改為 **Single-hop Direct Dispatch to Leaf**(刪除 `relayChain[]` / `RELAYED` 子狀態 / `POST .../relay` 端點)。詳見 ADR-0008(v1.3 全面改寫)。**衍生 Q-18 待用戶確認**:任一上級 manager 都能 dispatch,還是只有 root manager 能?(本期傾向前者) |
-| Q-15 | **ORG_MANAGER 與 leader 的關係?** | 角色與派工 | **拍板:ORG_MANAGER 每節點只有一位,Leader 有多位**。對應設計變動:(a) Organization 加 `managerId`(單值,nullable)+ `leaderIds[]`(0..N);(b) `ORG_MANAGER` 角色改為衍生(由 Organization.managerId 反查);(c) ActionRequest 預設 ownerId 規則重寫(0 → 409、1 → 自動、N → 派工方指定);(d) 新增 leaders CRUD API + transfer-manager API,**移除** v1.2 `transfer-leader` Org 端點。詳見 ADR-0010。**衍生 Q-19 待確認**:正式 deputy 機制是否需要欄位,還是靠 transfer-manager 流程? |
+| Q-14 | **「第一層組織」雙關詞最終釐清**:工作層是 root 還是 leaf? | Organization | **拍板:Leaf 才能工作,Root 只會指派 ActionRequest 到 Leaf**。導出兩個重大設計變動:(a) ActionRequest `targetOrgId` 必須是 leaf;(b) 移除「逐層 Relay 鏈」流程,改為 **Single-hop Direct Dispatch to Leaf**(刪除 `relayChain[]` / `RELAYED` 子狀態 / `POST .../relay` 端點)。詳見 ADR-0008(v1.3 全面改寫)。**Q-18 v1.4 拍板**:任一具備 manager 身份的上級節點皆可 dispatch(不限 root)。 |
+| Q-15 | **ORG_MANAGER 與 leader 的關係?** | 角色與派工 | **拍板:ORG_MANAGER 每節點只有一位,Leader 有多位**。對應設計變動:(a) Organization 加 `managerId`(單值,nullable)+ `leaderIds[]`(0..N);(b) `ORG_MANAGER` 角色改為衍生(由 Organization.managerId 反查);(c) ActionRequest 預設 ownerId 規則重寫(0 → 409、1 → 自動、N → 派工方指定);(d) 新增 leaders CRUD API + transfer-manager API,**移除** v1.2 `transfer-leader` Org 端點。詳見 ADR-0010。**Q-19 v1.4 拍板**:不引入 deputy 欄位,休假代理透過 `transfer-manager` 暫代,代理人選由 HR 端決定。 |
 | Q-16 | **HR API 介面細節**? | HR 整合 | **拍板:本期 MVP 採 HR Mock REST API**;規格細節(endpoint、payload、認證、降級、字段對應、正式串接 checklist)詳見 ADR-0007 之 v1.3 Amendment。**正式串接時務必檢視欄位對應**。 |
-| Q-17 | **GLOBAL Template 多語系與時間戳記策略**? | Template / i18n / 時區 | **拍板:統一使用 UTF-8 字集,允許混合多國語系輸入**(中、英、越、印尼…);**取消** GLOBAL Template `name_zh` / `name_en` / `name_vi` 等多欄位設計(name / description 為單一 Unicode 字串)。**時間戳記**:API 傳輸與事件 payload 用 ISO 8601 + offset(例 `2026-05-04T08:30:00+08:00`),**儲存層仍為 UTC `Instant`**(可索引、可運算);UI 顯示時依「使用者瀏覽器 locale」或「root Organization timezone」二擇一(預設後者)。**衍生 Q-24 待確認**:儲存是否需保留發起端原始 offset(如夜班跨日讀取的可讀性)? |
+| Q-17 | **GLOBAL Template 多語系與時間戳記策略**? | Template / i18n / 時區 | **拍板:統一使用 UTF-8 字集,允許混合多國語系輸入**(中、英、越、印尼…);**取消** GLOBAL Template `name_zh` / `name_en` / `name_vi` 等多欄位設計(name / description 為單一 Unicode 字串)。**時間戳記**:API 傳輸與事件 payload 用 ISO 8601 + offset(例 `2026-05-04T08:30:00+08:00`),**儲存層仍為 UTC `Instant`**(可索引、可運算);UI 顯示時依「使用者瀏覽器 locale」或「root Organization timezone」二擇一(預設後者)。**Q-24 v1.4 拍板**:儲存層**不保留**發起端原始 offset(不加 `<field>OffsetMinutes` 副欄位),offset 僅在 wire format 上呈現。 |
 
-### 8.2 由本次拍板衍生的新 Open Questions(待使用者最終確認)
+### 8.2 v1.4 拍板紀錄(Q-18 ~ Q-24,2026-05-07 規劃會議)
 
-| ID | 問題 | 影響範圍 | 預設行為(若使用者不另指示) |
+| ID | 問題 | 影響範圍 | v1.4 拍板答覆 |
 |---|---|---|---|
-| Q-18 | **ActionRequest 跨層 dispatch 的發起角色範圍**:任一具備 manager 身份的上級節點都能直派,還是**僅** root(FAB)層 manager 可派?Q-14 答覆只強調「目標必為 leaf」,未限定發起者;§1.3 字面允許任一上級。本 spec 採前者(任一上級可派),但若用戶本意為「派工權集中在廠級」需重大修訂。 | RBAC / FR-Dispatch | **預設**:任一上級 manager 皆可 dispatch 到其子孫 leaf。否則 `ORG_MANAGER` 綁中間層便失去意義。 |
-| Q-19 | **Manager 休假代理機制**:§1.3 提及「指定的代理人」,Q-15 答覆未明示。本 ADR-0010 不引入正式 `deputyManagerId` 欄位,改以 Operations 流程(`transfer-manager` 暫代,結束再轉回)。是否需要正式 deputy 欄位? | FR-Org | **預設**:無正式 deputy 欄位;靠 transfer-manager 操作。若加 deputy 將涉及 RBAC、`User.orgManagerScopes[]` 衍生規則調整。 |
-| Q-20 | **ActionRequest 在 leaf 端被 Reject 後的回流**:目前設計是 leaf 的 GROUP_MANAGER 可 reject,系統 emit `factory-ops.action-request.rejected` event;**是否要主動通知 originator**(例如生成一個「派工被退回」的 in-app notification 或 email)?還是 originator 自行訂閱 event 處理? | 通知策略 / FR-Dispatch | **預設**:只 emit event,不做主動推播 in-app notification。Webhook / 第三方訂閱者可自行處理。 |
-| Q-21 | **QA Review reject 的行為**:目前 ADR-0011 預設「reject 後 task 回 IN_PROGRESS,既往 reviews 清空,新一輪 review 重新蒐集」。**這是「重新走流程」語意**;另一可能語意是「保留先前 APPROVED,只清掉某些角色 review」。 | 工作流 / FR-3.12 | **預設**:reject 清空所有既往 reviews,task 回 IN_PROGRESS。 |
-| Q-22 | **Group settings 的歷史記錄**:目前以 `Group.history[]` 紀錄變更;是否需要為 settings 子文件做專屬 versioning(同 Template)?Snapshot at task creation 已避免影響進行中 Task,但設定本身的歷史是否需可查詢? | FR-Group / 稽核 | **預設**:不另做 versioning,沿用 `Group.history[]`(append-only),變更時 entry 帶 before/after diff payload。 |
-| Q-23 | **QA 雙簽 reviewer 角色清單語意**:`requiredReviewerRoles: ["QA", "SHIFT_LEAD"]` 是 **AND**(每角色各一筆 review)還是 **OR**(任一角色簽即可)?本期採 AND(對應「雙簽」字面)。 | 工作流 / FR-3.12 | **預設**:AND 語意。若用戶要 OR,改 ADR-0011 + INV-36。 |
-| Q-24 | **時間戳記儲存策略**:本期採「儲存 UTC `Instant`,傳輸 ISO 8601 + offset」(NFR / Q-17 說明);是否需要在儲存層額外保留**發起端原始 offset**(例如夜班 22:00 提交跨日,後續查看時不被換算成 UTC 後變得不直觀)? | NFR 時區 / 資料模型 | **預設**:不在儲存層保留 originating offset;UI 用 root tz 顯示即可。若 Q-24 確認需要,加 `<field>OffsetMinutes: int` 副欄位。 |
+| Q-18 | **ActionRequest 跨層 dispatch 的發起角色範圍** | RBAC / FR-Dispatch | **任一具備 manager 身份的上級節點皆可 dispatch**(不限 root)。授權判定為 server 沿 Organization 樹驗證 actor 在 targetOrg 的 ancestry path 上(含同節點)持有某個 manager scope。對應 §FR-Dispatch.1 / .4 改寫。Backend `DispatchService.kt:75` 已符合(已驗證)。 |
+| Q-19 | **Manager 休假代理機制** | FR-Org | **不引入 `deputyManagerId` 欄位**;一切代理透過 `transfer-manager` 暫代(休假結束再轉回);代理人選由 HR / Operations 流程決定(若 HR 服務本身有代理人欄位,本系統視為 HR 端負責,不在 Factory Ops 系統建模)。對應 §FR-Org.12 + ADR-0007 v1.4 Amendment。 |
+| Q-20 | **leaf 端 reject 是否主動通知 originator** | 通知策略 / FR-Dispatch | **只 emit `factory-ops.action-request.rejected` event,不主動推 in-app push notification**;originator 透過 NATS / Webhook 訂閱 / 報表自行得知,符合 §FR-Notification.1 雙通道策略。對應 §FR-Dispatch.7 + ADR-0009 v1.4 Amendment。 |
+| Q-21 | **QA Review reject 後既往 reviews 行為** | 工作流 / FR-3.12 | **清空 `qaReviews[]` + status 回退至 `IN_PROGRESS`**(語意「重新走流程」);`history[]` 保留所有 review 動作的稽核軌跡。對應 §FR-3.12 + ADR-0011 v1.4 Amendment。Backend `TaskService.kt:339-341` 已符合(已驗證)。 |
+| Q-22 | **Group settings 是否需專屬 versioning** | FR-Group / 稽核 | **不另做專屬 versioning**;沿用 `Group.history[]`(append-only,payload 含 before / after diff)。對應 §FR-Group.11。 |
+| Q-23 | **`requiredReviewerRoles` AND vs OR 語意** | 工作流 / FR-3.12 | **OR 白名單**(列示中的角色才能簽,但不要求每一角色到齊);`dualSignRequired = true` 仍要求 `qaReviews.size >= 2`,但**角色組合任意**;**同一 user 可以以不同角色多次簽核**(本系統為工廠派工輕量確認,非 GMP 品保雙簽,Q5 B 拍板)。對應 §FR-3.12 改寫 + INV-36 改寫 + ADR-0011 v1.4 Amendment(關鍵)。**M5.4 須改 backend**(`TaskService.kt:354` `all` → 新 OR 邏輯)。 |
+| Q-24 | **儲存層是否保留發起端原始 offset** | NFR 時區 / 資料模型 | **不保留**(不加 `<field>OffsetMinutes` 副欄位);UI 以 root Organization timezone(或使用者瀏覽器 locale)二擇一顯示。對應 §4 NFR 時區 row + §FR-Notification.4。 |
 
 ---
 
@@ -589,7 +664,7 @@
 - 主動逾期推播 / 排程掃描(Q-5 改 NATS+Webhook)
 - HR 雙向同步(本系統僅讀 HR;不寫回 HR)
 - 甘特圖(Q-8 拍板不做)
-- Manager 正式代理人欄位(Q-19 暫不做,靠 transfer-manager)
+- Manager 正式代理人欄位(Q-19 v1.4 拍板**不做**,靠 transfer-manager;代理人選由 HR 端決定)
 
 ---
 

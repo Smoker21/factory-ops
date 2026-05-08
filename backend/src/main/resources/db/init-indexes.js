@@ -724,6 +724,34 @@ try {
   print("revoked_tokens index error: " + e.message);
 }
 
+// ===================== outbox_dead_letters =====================
+// 對應 docs/data/indexes.md §17(v1.1.0 新增;M5.2 Block B)
+
+try {
+  // IDX-ODL-01: ops 查詢某租戶最近 N 個失敗事件
+  db.outbox_dead_letters.createIndex(
+    { rootOrgId: 1, createdAt: -1 },
+    { name: "idx_odl_root_created", background: true }
+  );
+
+  // IDX-ODL-02: 追蹤來源 outbox entry;unique + partialFilterExpression 確保冪等搬移
+  // 不用 sparse:sparse 仍索引 null 值(explicit null)會造成 unique 衝突
+  // partialFilterExpression 確保只索引 ObjectId 型別的值,null 不被索引
+  db.outbox_dead_letters.createIndex(
+    { originalOutboxId: 1 },
+    {
+      unique: true,
+      partialFilterExpression: { originalOutboxId: { $exists: true, $type: "objectId" } },
+      name: "idx_odl_original_outbox_unique",
+      background: true
+    }
+  );
+
+  print("outbox_dead_letters indexes OK");
+} catch (e) {
+  print("outbox_dead_letters index error: " + e.message);
+}
+
 // ===================== audit_logs =====================
 // 對應 docs/data/indexes.md §16
 

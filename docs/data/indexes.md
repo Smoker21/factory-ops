@@ -1,9 +1,14 @@
 # 索引設計文件
 
-**版本**: 1.0.0
-**對應 Spec**: v1.3.0
-**對應 schema.md**: v1.0.0
-**最後更新**: 2026-05-04
+**版本**: 1.1.0
+**對應 Spec**: v1.4.0
+**對應 schema.md**: v1.1.0
+**最後更新**: 2026-05-08
+
+### v1.1.0 變更摘要(2026-05-08,M5.2)
+
+- `users` collection:評估後**不建立** `{ rootOrgId: 1, lockedUntil: 1 }` 索引(M5 無背景解鎖 job;lockout 查詢走現有 `idx_user_account_unique`)。
+- 新增 §17 `outbox_dead_letters` 索引。
 
 ---
 
@@ -808,6 +813,49 @@ db.audit_logs.createIndex(
 
 ---
 
+## 17. outbox_dead_letters
+
+### 設計說明
+
+`outbox_dead_letters` 的主要查詢模式是 ops team 查詢「某租戶最近 N 個失敗 event」,因此建立 `{ rootOrgId: 1, createdAt: -1 }` 複合索引。
+
+**不建 TTL index**:dead-letter 屬調查證據,不自動過期。詳見 `docs/data/migrations/0002-outbox-dead-letter.md`。
+
+### 對應查詢
+
+| 使用場景 | 查詢條件 | 對應索引 |
+|---|---|---|
+| Ops 查詢某租戶最近 N 個失敗事件 | `rootOrgId + createdAt desc` | IDX-ODL-01 |
+| 依來源 outbox entry 查詢 | `originalOutboxId` | IDX-ODL-02 |
+
+### 索引清單
+
+```javascript
+// IDX-ODL-01: ops 查詢最近 N 個失敗事件
+db.outbox_dead_letters.createIndex(
+  { rootOrgId: 1, createdAt: -1 },
+  { name: "idx_odl_root_created" }
+);
+
+// IDX-ODL-02: 追蹤來源 outbox entry;unique + partialFilterExpression 確保冪等搬移
+// 注意:不使用 sparse,因 sparse index 仍索引 null 值(explicit null)會造成 unique 衝突。
+// partialFilterExpression 只索引 originalOutboxId 實際存在且非 null 的 document。
+db.outbox_dead_letters.createIndex(
+  { originalOutboxId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { originalOutboxId: { $exists: true, $type: "objectId" } },
+    name: "idx_odl_original_outbox_unique"
+  }
+);
+```
+
+注意:IDX-ODL-02 的 `partialFilterExpression` 使用 `$type: "objectId"` 確保只有真實存在的 ObjectId 才被索引。Document 若 `originalOutboxId = null`(例如未來沒有來源 outbox 的 dead-letter)不受 unique 約束限制,可正常插入多筆。
+
+空間估算:待測量
+
+---
+
 ## 附錄:索引命名規範
 
 | 前綴 | Collection |
@@ -827,4 +875,5 @@ db.audit_logs.createIndex(
 | `idx_webhook_` | webhooks |
 | `idx_wdl_` | webhook_dead_letters |
 | `idx_outbox_` | domain_event_outbox |
+| `idx_odl_` | outbox_dead_letters |
 | `idx_audit_` | audit_logs |

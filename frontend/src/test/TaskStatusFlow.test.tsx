@@ -93,13 +93,11 @@ describe('TaskStatusFlow', () => {
   beforeEach(() => {
     vi.mocked(useAuth).mockReturnValue({
       user: makeUser(),
-      accessToken: 'fake-token',
-      refreshToken: 'fake-refresh',
       isAuthenticated: true,
+      isLoading: false,
       login: vi.fn(),
       logout: vi.fn(),
       setUser: vi.fn(),
-      updateTokens: vi.fn(),
     })
   })
 
@@ -164,13 +162,11 @@ describe('TaskStatusFlow', () => {
     // User is not owner and not assignee
     vi.mocked(useAuth).mockReturnValue({
       user: makeUser({ id: 'user-99', roles: ['OPERATOR'] }),
-      accessToken: 'fake-token',
-      refreshToken: 'fake-refresh',
       isAuthenticated: true,
+      isLoading: false,
       login: vi.fn(),
       logout: vi.fn(),
       setUser: vi.fn(),
-      updateTokens: vi.fn(),
     })
 
     const task = makeTask({ ownerId: 'user-1', assignees: ['user-1'] })

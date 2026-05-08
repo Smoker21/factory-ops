@@ -18,8 +18,6 @@ import { useState } from 'react'
 import { login as apiLogin } from '@/api/auth'
 import { getMe } from '@/api/users'
 import { useAuth } from '@/auth/useAuth'
-import { decodeJwt, type JwtPayload } from '@/auth/jwtUtils'
-import type { Role, User } from '@/api/types'
 
 const schema = z.object({
   orgCode: z.string().min(1, '組織代號必填').max(60),
@@ -31,16 +29,9 @@ type LoginFormData = z.infer<typeof schema>
 
 const DEFAULT_ORG_CODE = (import.meta.env.VITE_DEFAULT_ORG_CODE as string | undefined) ?? ''
 
-// JwtIssuerService 簽出來的 claim 是 `groups`(MicroProfile JWT 慣例)，
-// MSW mock 則用 `roles`。把兩者對齊到前端的 User.roles。
-function jwtGroupsToRoles(payload: JwtPayload): Role[] {
-  const claim = payload.groups ?? payload.roles ?? []
-  return claim.filter((r): r is Role => typeof r === 'string') as Role[]
-}
-
 export function LoginPage() {
   const { t } = useTranslation()
-  const { login, setUser } = useAuth()
+  const { login } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const from = (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/'
@@ -58,34 +49,15 @@ export function LoginPage() {
   const onSubmit = async (data: LoginFormData) => {
     setError(null)
     try {
-      const tokens = await apiLogin(data)
-      const payload = decodeJwt(tokens.accessToken)
-      if (!payload) {
-        setError(t('auth.loginFailed'))
-        return
-      }
-      // Build a minimal user from the JWT and persist tokens immediately so the
-      // axios request interceptor can attach Authorization on the /me follow-up.
-      // Otherwise that GET /me runs without a token, hits 401, and the response
-      // interceptor's redirectToLogin() bounces us back to /login.
-      const userFromJwt: User = {
-        id: payload.userId,
-        rootOrgId: payload.rootOrgId,
-        accountName: payload.accountName,
-        displayName: payload.displayName ?? payload.accountName,
-        roles: jwtGroupsToRoles(payload),
-        groupIds: payload.groupIds ?? [],
-        orgManagerScopes: payload.orgManagerScopes ?? [],
-        active: true,
-      }
-      login(tokens.accessToken, tokens.refreshToken, userFromJwt)
-      // Best-effort enrichment with full profile (displayName, email, …).
-      try {
-        const fullUser = await getMe()
-        setUser(fullUser)
-      } catch {
-        // Keep the JWT-derived user on failure; user can still use the app.
-      }
+      // POST /auth/login — the backend sets three httpOnly cookies.
+      // Token values returned in the response body are intentionally ignored;
+      // subsequent requests authenticate via the cookies automatically.
+      await apiLogin(data)
+
+      // Fetch the canonical user profile now that the session cookie is set.
+      const user = await getMe()
+      login(user)
+
       navigate(from, { replace: true })
     } catch {
       setError(t('auth.loginFailed'))

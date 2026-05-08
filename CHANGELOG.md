@@ -6,39 +6,110 @@
 
 ## [Unreleased]
 
+---
+
+## [1.0.0-M5] - 2026-05-09
+
+里程碑 5：Hardening + Spec Lock-in（24 條 in-scope 全部收完）
+
 ### Added
 
-- **里程碑 5 計畫書（2026-05-07）**：
-  - `docs/release/m5-plan.md`：M5「Hardening + Spec Lock-in」完整規劃
-    - 範圍 freeze：7 spec 衍生 Q + 7 security P1 + 10 domain invariants P1（共 24 條）
-    - **6 個 sub-phase 序列執行**（M5.1 spec → M5.2 data prep → M5.3 backend security → M5.4 invariants+Q-23 OR → M5.5 frontend → M5.6 release）—— data 層變動集中於 M5.2 由 mongodb-modeler 一棒收完(2026-05-07 使用者 Q4 拍板 B 合棒);因 quarkus-backend-builder 嚴禁改 `domain/` 與 `docs/data/`(CLAUDE.md § Agent 讀寫邊界)
-    - 每階段條列 scope / Impact Matrix CT-N / 驗收 checklist / 啟動指令
-    - 已確認可從 STATUS 移除的過時項：P-001（cursor pagination 已實作）、S-008-ext（revoked_tokens TTL 已建)
-    - **Q-18~Q-24 七題已於 2026-05-07 規劃會議全拍板**(見 m5-plan.md §3.1):Q-19 transfer-manager(HR 端負責 deputy)/ Q-21 reject 清空 / Q-23 **採 OR 白名單** / Q-23 衍生 Q5「同人多角色」**不擋**(工廠派工輕量確認,非品保雙簽);Q-23 OR 切換落入 M5.4 code change
-    - 明確 defer 到 M6+：P-002 增量同步、P2 / 雜項 backlog、Notification、Daily Work Board
-- 方法論基建：
-  - `docs/release/impact-matrix.md`：15 種變更類型(`CT-1` ~ `CT-15`)對應的必動清單
-  - `docs/release/checklist.md`：可重用的 Release Checklist 範本（複製到 PR description 逐條勾）
-  - `scripts/verify.sh`：一鍵本地驗證腳本（後端 test、前端 typecheck/lint/test；`--full` 加 integration test + build）
-- `CLAUDE.md` 新增五個方法論子節：
-  - § Spec / ADR 變更原則（混合制：ADR immutable + Amendment / supersede；Spec living + git tag；Schema living + migrations/）
-  - § STATUS.md Compact 原則（主 STATUS 為儀表板，歷史下沉 sub-STATUS / CHANGELOG）
-  - § Release Discipline（Impact Matrix + verify.sh + Checklist + Definition of Done）
-  - § Agent 協作協定（Handoff 四件套、讀寫邊界表、Stuck Protocol、主-sub 分工、並行 vs 序列）
-  - § ADR 門檻（5-Lens 判斷、白/黑名單、Decision Tree、Status Lifecycle、五要素檢核）
+#### Spec lock-in(M5.1 + M5.1.5)
+- Q-18 ~ Q-24 七題衍生 Open Questions 全部落地進 spec / ADR（2026-05-07 規劃會議拍板；2026-05-08 spec-architect 落地）
+  - Q-18 跨層 dispatch：任一上級 manager 皆可（`requirements.md §FR-Dispatch.1/.4`，已驗 backend 一致）
+  - Q-19 Manager 代理：不引入 deputy 欄位，靠 transfer-manager，HR 端負責（`ADR-0007 v1.4 Amendment`）
+  - Q-20 leaf reject 通知：只 emit event，不主動推 push（`ADR-0009 v1.4 Amendment`）
+  - Q-21 QA reject 後清空既往 reviews（`ADR-0011 v1.4 Amendment §5`）
+  - Q-22 Group settings 不做 versioning，沿用 `history[]`
+  - Q-23 `requiredReviewerRoles` 採 OR 白名單語意 + 不擋同人多角色簽（Q5 B，工廠派工輕量確認）（`ADR-0011 v1.4 Amendment §1-4`）
+  - Q-24 不保留發起端原始 UTC offset
+- `docs/adr/0015-jwt-cookie-and-csrf.md`：新建 ADR-0015（Status: Accepted）— JWT Cookie + CSRF Model；Decision「refresh httpOnly cookie + access 雙模兼容 + CSRF double-submit」；4 個 Alternatives Considered
+- `requirements.md §FR-1.5 ~ §FR-1.8`：refresh cookie / access dual-mode / CSRF double-submit / cookie lifecycle 行為總表
+- `openapi.yaml`：`components.securitySchemes.cookieAuth`、`components.parameters.CsrfHeader`、`components.responses.CsrfMismatch`；login/refresh/logout 三端點補 `Set-Cookie` response header 描述；全 64 個 mutating ops 補 `CsrfHeader $ref`
+
+#### Data model(M5.2)
+- `backend/src/main/kotlin/com/factoryops/domain/user/User.kt`：`failedLoginCount: Int = 0`、`lockedUntil: Instant? = null`（serves S-016）
+- `backend/src/main/kotlin/com/factoryops/domain/event/OutboxDeadLetter.kt`：新增 outbox dead-letter aggregate（選項 X，與 `WebhookDeadLetter` 並存）
+- `docs/data/migrations/0001-user-lockout-fields.md`、`0002-outbox-dead-letter.md`（首次建立 `docs/data/migrations/` 目錄；4 項齊備）
+
+#### Backend Security Hardening(M5.3)
+- `LockoutStateWriter`：S-016 持久化修正，`@Transactional(REQUIRES_NEW)` + `persistOrUpdate()` 確保鎖定狀態獨立 commit
+- `CsrfFilter`：double-submit cookie CSRF filter（cookie-mode 才啟動，Bearer-only 透通）
+- `CookieHelper`：三個 auth cookie 的統一工廠（buildLoginCookies / buildClearCookies / generateXsrfToken）
+- `RateLimiter`：per-IP + per-account 雙鍵 sliding-window（login / logout / changePassword；超限 429 + RFC 7807 + Retry-After）
+- `CorsValidationOnStartup`：prod profile 啟動 fail-fast（CORS_ORIGINS 未設或為 `*` → 拒絕啟動）
+- UserService.createUser：`SecureRandom` 產 16 字元臨時密碼；密碼強度驗證（≥12 字元 + ≥3 字元類別）
+- UserRepository.searchByKeyword：`Pattern.quote` + 長度 cap 64 + 禁 `*`/`?` + 前綴匹配（S-013）
+- `DomainExceptions`：新增 `AccountLockedException`、`RateLimitExceededException`
+
+#### Domain Invariants(M5.4)
+- C-005：`DispatchService.convertToTask` 加 SUBMITTED 狀態前置檢查 + 顯式 SeverityLevel → Priority 映射表
+- C-006：`TaskService.changeTaskStatus` force-complete 加 group membership 驗證（actor 非成員 → 403）
+- C-007：`TaskService.buildQaReviewPolicy` mapNotNull 改顯式 404 拋出（不再靜默忽略找不到的 group）
+- C-008：IN_REVIEW → DONE 兩條路徑（qa_review_complete / force_complete）統一走 `applyDoneTransition()` helper
+- C-009：`ProjectService` 狀態機補 `PAUSED → COMPLETED` 合法轉移
+- C-010：`ProjectService.createProject` 加 `due > start` 日期驗證
+- C-011：`TaskService.createTask` 加 `dueAt >= project.startAt` 驗證
+- C-012：`TaskService.addAssignees` 批次查 user 全 active + 同 `rootOrgId`
+- C-014：`OrganizationService.deleteOrg` 加 `countActiveByOrg` + `countByOrg` 阻擋（有 active 資源 → 409）
+- C-015：`OutboxPoller` retryCount > 10 → 搬入 `outbox_dead_letters` collection；exponential backoff 上限 3600s；DuplicateKeyException 冪等
+- `OutboxDeadLetterDocument` + `OutboxDeadLetterRepository`（M5.2 handoff 指定，M5.4 建立）
+- `ProjectRepository.countActiveByOrg`、`GroupRepository.countByOrg`（C-014 新查詢方法）
+
+#### Frontend Cookie 改造(M5.5)
+- `frontend/src/utils/cookies.ts`：`getCookie(name)` utility（供 CSRF echo interceptor 讀 XSRF-TOKEN 值）
+- `frontend/src/api/client.ts` 完整重寫：`withCredentials: true`；CSRF echo interceptor；refresh dedupe（`isRefreshing` + `refreshQueue`）；redirect loop guard
+- `AuthContext.tsx`：mount 時以 `GET /me` bootstrap session；`isLoading` race 處理
+- `ProtectedRoute.tsx`：`isLoading` guard（防止 cookie bootstrap 時閃跳 /login）
+
+#### 測試成長
+- backend：425（M4）→ 547（M5.3.2）→ 654（M5.4.2）：**+229 tests，全綠**
+- frontend：66（M4）→ 73（M5.5.1）→ 102（M5.5.2）：**+36 tests，全綠**
+- 新增整合測試：`AuthCookieFlowIT`（20 cases）、`AuthLockoutIT`（5 cases，M5.4.2 改造）、`AuthRateLimitIT`、`DeleteOrgBlockedIT`（C-014）、`OutboxDeadLetterIT`（C-015）
+- BDD step defs 改寫為 cookie jar 模式（`injectAuthCookies()` + Playwright 原生 cookie jar）；新增「reload 仍登入」與「登出後 reload 不再登入」兩個情境
 
 ### Changed
 
-- `STATUS.md`:加入 M5 里程碑列;P1 Backlog 每條標註 M5 sub-phase 歸屬(M5.2 / M5.3 / M5.4)或 defer 標記;P-001、S-008-ext 從 P1 移到「已剔除/過時項」區
-- `CLAUDE.md`:M5+ 區塊從 placeholder 改為具體 M5 sub-phase 表(指向 `docs/release/m5-plan.md`)+ M6+ 候選主題清單
-- `STATUS.md` 依 Compact 原則精簡(230 行 → ~85 行):刪除 v1.3 重整摘要、給 mongodb-modeler 的銜接訊息、Q-18 ~ Q-24、驗收檢核清單;歸檔內容已存於 `docs/spec/STATUS.md`
-- `CLAUDE.md` 反映 M1-M4 完成現況：M1-M4 詳述壓成完成歷史表（指向 sub-STATUS / CHANGELOG），新增 M5+ placeholder 與通用啟動範本
-- `CLAUDE.md` 目錄結構新增 `docs/release/`、`scripts/`、`e2e/`、`docker/` 條目
-- `CLAUDE.md` 「文件 / 自主程度」子節改為引用新的 § STATUS.md Compact、§ Agent 協作協定、§ ADR 門檻
+- `requirements.md` / `openapi.yaml`：v1.3.0 → **v1.5.0**（Q-18~Q-24 拍板 → v1.4；cookie/CSRF spec 補件 → v1.5）
+- `schema.md` / `indexes.md`：v1.0 → **v1.1.0**（User lockout 兩欄 + `outbox_dead_letters` collection）
+- **Q-23 雙簽語意**：AND → **OR 白名單**（`TaskService.kt` `all` → `size >= 2`；`ADR-0011 v1.4 Amendment §1-4`；同人多角色不擋）
+- `UserDocument`：加 `failedLoginCount`、`lockedUntil`；`UserMapper` 雙向映射同步更新
+- JWT 改 dual-mode：cookie 優先 + Bearer header fallback（SmallRye JWT `mp.jwt.token.header=Cookie` + `smallrye.jwt.always-check-authorization=true`）
+- `AuthResource`：login/refresh/logout 加三 cookie；refresh 從 cookie 讀；失敗清 cookie
+- `LoginPage`：不再 `decodeJwt`、不再寫 `localStorage`；以 `getMe()` 取得 user
+- `UserMenu.tsx`：`apiLogout()` 無參數；移除 `refreshToken` 依賴
+- `vite.config.ts`：新增 `/v1` → `localhost:8080` proxy（dev 環境同 origin cookie 傳遞）
+- `backend/src/main/resources/application.properties`：
+  - OpenAPI runtime `info-version` 1.3.0 → **1.5.0**（P1-4）
+  - CSRF exempt-paths 移除 `/mock-hr`（prod 不存在）；`%dev` profile 補回（P2-3）
+  - 新增 `%test.auth.cookie.secure=false` + `%test.auth.cookie.same-site=Lax`（P2-5）
+  - 新增 S-016 lockout 參數、S-015 rate-limit 參數、S-009 cookie/CSRF 參數
+- `docs/adr/0007-user-hr-integration.md`、`0009-event-distribution-nats-and-webhooks.md`、`0011-group-settings-qa-dualsign.md`：各加 `v1.4 Amendment`
+- `docs/spec/openapi.yaml`：C-014 `/orgs/{orgId}` DELETE 補 404 response + 更新 409 說明
+
+### Fixed
+
+- **S-016 持久化根因**：`AuthService.login()` 的 `@Transactional` 在 throw `UnauthorizedException` 時 JTA rollback 撤銷 lockout 寫入 → 改 `LockoutStateWriter`（`@Transactional(REQUIRES_NEW)`）確保獨立 commit；`AuthLockoutIT` 由紅轉綠
+- S-013：`UserRepository.searchByKeyword` 直接串入未 escape 的 keyword 作為正則表達式（ReDoS 潛在風險）→ `Pattern.quote` + 前綴匹配
+- S-011：`UserService.createUser` 原接受 caller 傳入明文 `defaultPassword` → 伺服器端 `SecureRandom` 生成
+- S-017：`LoginRequest @Size(max=128)` 已確認就位（M3 已有，M5 驗證）
+- C-005 ~ C-015：所有 domain invariant 強化（見 Added 段）
 
 ### Removed
 
-- `CLAUDE.md` 移除過時描述「Task 內容可使用貼圖」（與 spec Q-4 拍板結果不一致）
+- `frontend/src/auth/jwtUtils.ts`（dead code，cookie-first 模式不需解析 client-side JWT）
+- `frontend/src/api/client.ts` 及所有相關元件中的 `localStorage` token 操作（`localStorage` 在 `frontend/src/api/` grep = 0 hits）
+- `UserDtos.CreateUserRequest.defaultPassword` 欄位（改由伺服器端生成）
+- `spec STATUS.md` Q-18 ~ Q-24 Open Questions（全部拍板）
+
+### Status hygiene
+
+- P1 backlog 移除：S-009/010/011/013/015/016/017、C-005 ~ C-015、Q-23 OR、P-001（cursor pagination 已在 M4 實作）、S-008-ext（revoked_tokens TTL 已在 M4 建 index）
+- P1 backlog 新增（本期 code review 產出，進 M6+）：
+  - **P1-1** `LockoutStateWriter` 走 repository 抽象（目前直呼叫 `persistOrUpdate()`）
+  - **P1-2** `OutboxPoller.pollAndProcess()` dead-letter 寫入 + 原 entry 標記非原子（最終一致性，冪等保護；M6 補 `@Transactional` 包覆 + ADR-0009 v1.5 Amendment）
+  - **P1-3** CSRF dual-mode 強制截止點（ADR-0015 v1.6 Amendment + `security.csrf.strict-mode` toggle）
+  - P2 七條（見 `docs/review/m5-review.md`）
 
 ---
 
@@ -147,7 +218,8 @@
 
 ---
 
-[Unreleased]: https://github.com/smoker21/factory-ops/compare/v1.0.0-M4...HEAD
+[Unreleased]: https://github.com/smoker21/factory-ops/compare/v1.0.0-M5...HEAD
+[1.0.0-M5]: https://github.com/smoker21/factory-ops/compare/v1.0.0-M4...v1.0.0-M5
 [1.0.0-M4]: https://github.com/smoker21/factory-ops/compare/v1.0.0-M3...v1.0.0-M4
 [1.0.0-M3]: https://github.com/smoker21/factory-ops/compare/v1.0.0-M2...v1.0.0-M3
 [1.0.0-M2]: https://github.com/smoker21/factory-ops/compare/v1.0.0-M1...v1.0.0-M2

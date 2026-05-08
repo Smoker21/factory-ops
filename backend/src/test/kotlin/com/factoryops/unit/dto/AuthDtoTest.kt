@@ -116,9 +116,12 @@ class AuthDtoTest {
     }
 
     // ─── RefreshRequest ─────────────────────────────────────────────────────────
+    // M5.3 S-009: refreshToken is now optional (cookie-first mode, §FR-1.8).
+    // Cookie path: refresh_token httpOnly cookie → no body needed.
+    // Body path:   refreshToken field retained for backward compatibility (M6 will remove).
 
     @Test
-    fun `RefreshRequest happy path passes validation`() {
+    fun `RefreshRequest with token body passes validation`() {
         // Given
         val dto = RefreshRequest(refreshToken = "some-valid-token")
 
@@ -130,33 +133,34 @@ class AuthDtoTest {
     }
 
     @Test
-    fun `RefreshRequest with blank token fails validation`() {
-        // Given
+    fun `RefreshRequest without token body passes validation (cookie-mode)`() {
+        // Given: no body token — cookie path will supply the refresh token
+        val dto = RefreshRequest(refreshToken = null)
+
+        // When
+        val violations = validator.validate(dto)
+
+        // Then: no constraint violations; resource resolves from cookie
+        assertTrue(violations.isEmpty(), "Null refreshToken is valid — cookie supplies the token")
+    }
+
+    @Test
+    fun `RefreshRequest with empty string body passes validation (cookie-mode)`() {
+        // Given: empty string treated as absent — resource will resolve from cookie
         val dto = RefreshRequest(refreshToken = "")
 
         // When
         val violations = validator.validate(dto)
 
-        // Then
-        assertTrue(violations.any { it.propertyPath.toString() == "refreshToken" })
+        // Then: no Bean Validation constraint on the field
+        assertTrue(violations.isEmpty(), "Empty refreshToken has no Bean Validation constraint — resource handles it")
     }
 
     // ─── LogoutRequest ──────────────────────────────────────────────────────────
+    // M5.3 S-009: refreshToken is now optional (cookie-first mode, §FR-1.8).
 
     @Test
-    fun `LogoutRequest with blank token fails validation`() {
-        // Given
-        val dto = LogoutRequest(refreshToken = "")
-
-        // When
-        val violations = validator.validate(dto)
-
-        // Then
-        assertTrue(violations.any { it.propertyPath.toString() == "refreshToken" })
-    }
-
-    @Test
-    fun `LogoutRequest happy path passes validation`() {
+    fun `LogoutRequest with token body passes validation`() {
         // Given
         val dto = LogoutRequest(refreshToken = "some-token")
 
@@ -165,6 +169,18 @@ class AuthDtoTest {
 
         // Then
         assertTrue(violations.isEmpty())
+    }
+
+    @Test
+    fun `LogoutRequest without token body passes validation (cookie-mode)`() {
+        // Given: no body token — cookie path supplies the refresh token
+        val dto = LogoutRequest(refreshToken = null)
+
+        // When
+        val violations = validator.validate(dto)
+
+        // Then: no constraint violations; resource resolves from cookie
+        assertTrue(violations.isEmpty(), "Null refreshToken is valid — cookie supplies the token")
     }
 
     // ─── ChangePasswordRequest ──────────────────────────────────────────────────

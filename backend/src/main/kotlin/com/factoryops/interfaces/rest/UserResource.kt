@@ -3,6 +3,7 @@ package com.factoryops.interfaces.rest
 import com.factoryops.application.service.UserService
 import com.factoryops.domain.shared.enums.Role
 import com.factoryops.interfaces.dto.CreateUserRequest
+import com.factoryops.interfaces.dto.CreateUserResponse
 import com.factoryops.interfaces.dto.UpdateUserRequest
 import com.factoryops.interfaces.dto.UserPageResponse
 import com.factoryops.interfaces.dto.UserResponse
@@ -56,17 +57,23 @@ class UserResource {
 
     @POST
     @RolesAllowed("ORG_ADMIN", "ADMIN")
-    @Operation(summary = "Create user from HR")
-    @APIResponse(responseCode = "201", description = "User created")
+    @Operation(
+        summary = "Create user from HR",
+        description = "Creates a user record by syncing from HR. A random temporary password is generated " +
+            "and returned once in this response. The plain-text password is never stored or logged."
+    )
+    @APIResponse(responseCode = "201", description = "User created with one-time temporary password")
     @APIResponse(responseCode = "403", description = "Forbidden")
-    @APIResponse(responseCode = "409", description = "Conflict")
+    @APIResponse(responseCode = "409", description = "Conflict — accountName already exists")
     @APIResponse(responseCode = "422", description = "Validation error")
     fun create(@Valid request: CreateUserRequest): Response {
         val actorId = requestContext.requireUserId()
         val rootOrgId = requestContext.requireRootOrgId()
         val roles = request.roles.mapNotNull { runCatching { Role.valueOf(it) }.getOrNull() }
-        val user = userService.createUser(rootOrgId, request.accountName, roles, request.defaultPassword, actorId)
-        return Response.status(201).entity(user.toResponse()).build()
+        val result = userService.createUser(rootOrgId, request.accountName, roles, actorId)
+        return Response.status(201)
+            .entity(CreateUserResponse(user = result.user.toResponse(), temporaryPassword = result.temporaryPassword))
+            .build()
     }
 
     @GET

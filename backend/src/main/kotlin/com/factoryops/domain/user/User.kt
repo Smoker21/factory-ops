@@ -51,7 +51,23 @@ data class User(
     val hrSyncedAt: Instant? = null,
     /** HR 標記離職時為 false */
     val active: Boolean = true,
-    val schemaVersion: Int = 1,
+    /**
+     * 連續登入失敗次數。
+     * AuthService 在每次登入失敗時遞增;登入成功時重設為 0。
+     * 累積達到 lockout 閾值(預設 5 次)時設定 lockedUntil。
+     * 既存 document 反序列化時自動帶預設值 0(backward compatible)。
+     * v1.4 新增(M5.2 Block A / serves M5.3 S-016)。
+     */
+    val failedLoginCount: Int = 0,
+    /**
+     * 帳號鎖定到期時間。
+     * null = 未鎖定;非 null = 鎖定中(AuthService 比對 Instant.now() < lockedUntil)。
+     * 鎖定時長由 AuthService 設定(預設 15 分鐘)。
+     * 既存 document 反序列化時自動帶預設值 null(backward compatible)。
+     * v1.4 新增(M5.2 Block A / serves M5.3 S-016)。
+     */
+    val lockedUntil: Instant? = null,
+    val schemaVersion: Int = 2,
     val createdAt: Instant = Instant.now(),
     val deletedAt: Instant? = null
 )

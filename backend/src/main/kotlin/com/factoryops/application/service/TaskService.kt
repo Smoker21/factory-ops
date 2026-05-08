@@ -19,6 +19,7 @@ import com.factoryops.interfaces.exception.ValidationException
 import com.factoryops.persistence.document.TaskDocument
 import com.factoryops.persistence.mapper.OrganizationMapper
 import com.factoryops.persistence.mapper.TaskMapper
+import com.factoryops.persistence.repository.GroupMembershipRepository
 import com.factoryops.persistence.repository.GroupRepository
 import com.factoryops.persistence.repository.ProjectRepository
 import com.factoryops.persistence.repository.TaskRepository
@@ -42,6 +43,7 @@ class TaskService(
     private val taskRepository: TaskRepository,
     private val projectRepository: ProjectRepository,
     private val groupRepository: GroupRepository,
+    private val groupMembershipRepository: GroupMembershipRepository,
     private val userRepository: UserRepository,
     private val eventPublisherService: EventPublisherService
 ) {
@@ -105,6 +107,14 @@ class TaskService(
         val projectDoc = projectRepository.findByIdAndRootOrg(ObjectId(projectId), rootId)
             ?: throw NotFoundException("Project not found: $projectId")
 
+        // C-011: validate task dueAt >= project.startAt (INV-5)
+        val projectStartAt = projectDoc.schedule?.start
+        if (schedule != null && schedule.due != null && projectStartAt != null) {
+            if (schedule.due < projectStartAt) {
+                throw ValidationException("Task due date must not be before project start date", "invalid_due_date")
+            }
+        }
+
         // Validate ownerId ∈ assignees (INV-1)
         val allAssignees = (assignees + ownerId).distinct()
 
@@ -149,8 +159,10 @@ class TaskService(
 
     private fun buildQaReviewPolicy(rootOrgId: String, groupIds: List<String>): QaReviewPolicy {
         val rootId = ObjectId(rootOrgId)
-        val groups = groupIds.mapNotNull { gid ->
+        // C-007: mapNotNull replaced with explicit 404 — silent ignore leads to wrong policy snapshot
+        val groups = groupIds.map { gid ->
             groupRepository.findByIdAndRootOrg(ObjectId(gid), rootId)
+                ?: throw NotFoundException("Group $gid not found when building QA review policy")
         }
         val dualSignRequired = groups.any { it.settings.qa.dualSignRequired }
         val requiredRoles = groups
@@ -202,18 +214,32 @@ class TaskService(
             if (reason.isNullOrBlank()) {
                 throw ValidationException("reason (bypassReason) is required for force-complete with dualSignRequired task", "reason_required")
             }
+            // C-006: actor must be an active member of at least one of the task's groups
+            val rootId = doc.rootOrgId
+            val isMember = doc.qaReviewPolicy.sourceGroupIds.any { groupId ->
+                groupMembershipRepository.findActiveByGroupIdAndUserId(rootId, groupId, ObjectId(actorId)) != null
+            }
+            if (!isMember) {
+                throw ForbiddenException(
+                    "Actor must be an active member of one of the task's groups to force-complete",
+                    "not_group_member"
+                )
+            }
         }
 
         validateTaskStatusTransition(current, newStatus)
 
         val now = Instant.now()
-        doc.status = newStatus.name
+        val bypassed = actorRoles.contains("GROUP_MANAGER") && doc.qaReviewPolicy.dualSignRequired
         if (newStatus == TaskStatus.DONE) {
-            doc.completedAt = now
+            // C-008: use shared transitionToDone helper for consistent history/event
+            applyDoneTransition(doc, actorId, now, via = if (bypassed) "force_complete" else "status_change", bypassed = bypassed, reason = reason, from = current.name)
+        } else {
+            doc.status = newStatus.name
+            doc.history = doc.history + OrganizationMapper.auditToDocument(
+                AuditEntry(actorId = actorId, action = "TASK_STATUS_CHANGED", at = now, payload = mapOf("from" to current.name, "to" to newStatus.name, "reason" to reason))
+            )
         }
-        doc.history = doc.history + OrganizationMapper.auditToDocument(
-            AuditEntry(actorId = actorId, action = "TASK_STATUS_CHANGED", at = now, payload = mapOf("from" to current.name, "to" to newStatus.name, "reason" to reason, "bypassed" to (actorRoles.contains("GROUP_MANAGER") && doc.qaReviewPolicy.dualSignRequired)))
-        )
         doc.updatedAt = now
         taskRepository.update(doc)
 
@@ -238,9 +264,49 @@ class TaskService(
         }
     }
 
+    /**
+     * C-008: Unified DONE transition. Both auto-complete (qa_review_complete) and manual/force paths
+     * call this method to guarantee consistent history entries and event emission.
+     */
+    private fun applyDoneTransition(
+        doc: com.factoryops.persistence.document.TaskDocument,
+        actorId: String,
+        now: Instant,
+        via: String,
+        bypassed: Boolean,
+        reason: String? = null,
+        from: String = TaskStatus.IN_REVIEW.name
+    ) {
+        doc.status = TaskStatus.DONE.name
+        doc.completedAt = now
+        val payload = mutableMapOf<String, Any?>(
+            "from" to from,
+            "to" to TaskStatus.DONE.name,
+            "via" to via,
+            "bypassed" to bypassed
+        )
+        if (reason != null) payload["reason"] = reason
+        doc.history = doc.history + OrganizationMapper.auditToDocument(
+            AuditEntry(actorId = actorId, action = "TASK_STATUS_CHANGED", at = now, payload = payload)
+        )
+    }
+
     fun addAssignees(taskId: String, rootOrgId: String, userIds: List<String>, actorId: String): Task {
         val doc = taskRepository.findByIdAndRootOrg(ObjectId(taskId), ObjectId(rootOrgId))
             ?: throw NotFoundException("Task not found: $taskId")
+
+        // C-012: all new assignees must be active users in the same rootOrgId
+        val rootId = ObjectId(rootOrgId)
+        val invalidUserIds = userIds.filter { uid ->
+            val userDoc = userRepository.findByIdAndNotDeleted(ObjectId(uid), rootId)
+            userDoc == null || !userDoc.active
+        }
+        if (invalidUserIds.isNotEmpty()) {
+            throw ValidationException(
+                "The following user IDs are not active or not found in this organization: $invalidUserIds",
+                "invalid_assignees"
+            )
+        }
 
         val newAssignees = (doc.assignees + userIds.map { ObjectId(it) }).distinct()
         val now = Instant.now()
@@ -337,7 +403,7 @@ class TaskService(
         }
 
         if (decision == ReviewDecision.REJECTED) {
-            // Clear all reviews and move back to IN_PROGRESS
+            // Q-21: reject clears all reviews and reverts to IN_PROGRESS (ADR-0011 v1.4 Amendment §5)
             doc.qaReviews = emptyList()
             doc.status = TaskStatus.IN_PROGRESS.name
             doc.history = doc.history + OrganizationMapper.auditToDocument(
@@ -349,15 +415,16 @@ class TaskService(
                 AuditEntry(actorId = actorId, action = "TASK_REVIEW_APPROVED", at = now, payload = mapOf("role" to reviewerRole.name))
             )
 
-            // Check if all required roles have approved
-            val approvedRoles = doc.qaReviews.filter { it.decision == ReviewDecision.APPROVED.name }.map { it.reviewerRole }.toSet()
-            val allRequiredApproved = doc.qaReviewPolicy.requiredReviewerRoles.all { approvedRoles.contains(it) }
-            if (allRequiredApproved) {
-                doc.status = TaskStatus.DONE.name
-                doc.completedAt = now
-                doc.history = doc.history + OrganizationMapper.auditToDocument(
-                    AuditEntry(actorId = actorId, action = "TASK_STATUS_CHANGED", at = now, payload = mapOf("from" to "IN_REVIEW", "to" to "DONE", "via" to "qa_review_complete"))
-                )
+            // Q-23 OR: auto-complete when enough reviews have been collected.
+            // ADR-0011 v1.4 Amendment §2 formula:
+            //   auto_complete = qaReviews.size >= 2 AND all reviews are in whitelist AND all are APPROVED
+            // dualSignRequired is always true here because the early guard above throws when it's false.
+            // The whitelist is enforced at write time (role guard above).
+            // REJECTED clears qaReviews, so surviving reviews are always APPROVED — size check suffices.
+            val requiredCount = if (doc.qaReviewPolicy.dualSignRequired) 2 else 1  // else=unreachable (guard above)
+            if (doc.qaReviews.size >= requiredCount) {
+                // C-008: shared transitionToDone helper ensures consistent history/event across both paths
+                applyDoneTransition(doc, actorId, now, via = "qa_review_complete", bypassed = false)
             }
         }
 

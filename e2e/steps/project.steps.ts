@@ -1,7 +1,7 @@
 import { Given, When, Then } from '@cucumber/cucumber';
 import { expect } from '@playwright/test';
 import type { FactoryOpsWorld } from '../support/world';
-import { loginAs, injectAuthToLocalStorage, seedProject, fetchProjects } from '../support/api';
+import { seedProject, fetchProjects } from '../support/api';
 import { FRONTEND_BASE_URL } from '../playwright.config';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires

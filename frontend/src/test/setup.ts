@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom'
 import { afterAll, afterEach, beforeAll, vi } from 'vitest'
 import { server } from './server'
+import { resetMockSession } from '../mocks/handlers'
 
 // Mock window.matchMedia for Mantine (jsdom does not support it)
 Object.defineProperty(window, 'matchMedia', {
@@ -32,5 +33,11 @@ global.IntersectionObserver = vi.fn().mockImplementation(() => ({
 }))
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'bypass' }))
-afterEach(() => server.resetHandlers())
+afterEach(() => {
+  server.resetHandlers()
+  // Reset module-scoped in-memory session state so tests cannot bleed into each other.
+  // server.resetHandlers() only resets per-test handler overrides; currentMockUser must
+  // be reset separately.
+  resetMockSession()
+})
 afterAll(() => server.close())

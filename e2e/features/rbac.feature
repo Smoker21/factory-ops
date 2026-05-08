@@ -25,4 +25,4 @@
     假設 我以 admin.system 登入,access 與 refresh token 都已失效
     當 我打開任一受保護 API 頁面
     那麼 我應該被導回 "/login"
-    並且 localStorage 應被清空
+    並且 瀏覽器 cookies 應被清空

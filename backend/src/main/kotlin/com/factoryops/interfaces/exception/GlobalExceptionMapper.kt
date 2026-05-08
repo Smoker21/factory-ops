@@ -19,7 +19,8 @@ data class ProblemDetail(
     val detail: String? = null,
     val instance: String? = null,
     val traceId: String? = null,
-    val errors: List<FieldError>? = null
+    val errors: List<FieldError>? = null,
+    val retryAfterSeconds: Long? = null
 )
 
 data class FieldError(
@@ -42,6 +43,8 @@ class GlobalExceptionMapper {
             is BusinessRuleViolationException -> Pair(422, "Business Rule Violation")
             is ExternalServiceException -> Pair(503, "External Service Unavailable")
             is StateTransitionException -> Pair(409, "Invalid State Transition")
+            is AccountLockedException -> Pair(401, "Account Locked")
+            is RateLimitExceededException -> Pair(429, "Too Many Requests")
         }
 
         logger.warn { "Domain exception [${ex.errorCode}]: ${ex.message}" }
@@ -54,13 +57,24 @@ class GlobalExceptionMapper {
             instance = uriInfo.requestUri.toString(),
             errors = if (ex is ValidationException && ex.field != null) {
                 listOf(FieldError(ex.field, ex.errorCode, ex.message ?: ""))
-            } else null
+            } else null,
+            retryAfterSeconds = when (ex) {
+                is AccountLockedException -> ex.retryAfterSeconds
+                is RateLimitExceededException -> ex.retryAfterSeconds
+                else -> null
+            }
         )
 
-        return Response.status(status)
+        val builder = Response.status(status)
             .type("application/problem+json")
             .entity(problem)
-            .build()
+
+        // Add Retry-After header for 429 responses
+        if (ex is RateLimitExceededException) {
+            builder.header("Retry-After", ex.retryAfterSeconds.toString())
+        }
+
+        return builder.build()
     }
 
     @ServerExceptionMapper

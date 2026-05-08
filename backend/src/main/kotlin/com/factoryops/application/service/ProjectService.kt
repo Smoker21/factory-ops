@@ -113,6 +113,13 @@ class ProjectService(
             }
         }
 
+        // C-010: validate schedule.due > schedule.start (INV-4)
+        if (schedule != null && schedule.start != null && schedule.due != null) {
+            if (schedule.due <= schedule.start) {
+                throw ValidationException("Project due date must be after start date", "invalid_schedule")
+            }
+        }
+
         // Ensure ownerId ∈ memberIds
         val allMemberIds = (memberIds + ownerId).distinct()
 
@@ -188,7 +195,8 @@ class ProjectService(
         val allowed = mapOf(
             ProjectStatus.DRAFT to setOf(ProjectStatus.ACTIVE, ProjectStatus.CANCELLED),
             ProjectStatus.ACTIVE to setOf(ProjectStatus.PAUSED, ProjectStatus.COMPLETED, ProjectStatus.CANCELLED),
-            ProjectStatus.PAUSED to setOf(ProjectStatus.ACTIVE, ProjectStatus.CANCELLED),
+            // C-009: PAUSED → COMPLETED is a valid transition (e.g. project completed while paused)
+            ProjectStatus.PAUSED to setOf(ProjectStatus.ACTIVE, ProjectStatus.COMPLETED, ProjectStatus.CANCELLED),
             ProjectStatus.COMPLETED to emptySet(),
             ProjectStatus.CANCELLED to emptySet()
         )

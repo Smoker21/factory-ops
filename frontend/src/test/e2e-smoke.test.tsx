@@ -20,9 +20,6 @@ import { AuthProvider } from '@/auth/AuthContext'
 import { LoginPage } from '@/routes/LoginPage'
 import { login } from '@/api/auth'
 import { getMe } from '@/api/users'
-import type { TokenPair } from '@/api/types'
-
-const ACCESS_TOKEN_KEY = 'factory_ops_access_token'
 
 function createTestQueryClient() {
   return new QueryClient({
@@ -91,21 +88,20 @@ describe('Auth Smoke Tests', () => {
 })
 
 describe('API Integration Smoke Tests', () => {
-  let tokens: TokenPair
-
+  // After login the MSW handler sets an in-memory session so subsequent
+  // /me calls resolve without relying on real cookie jar plumbing in jsdom.
   beforeEach(async () => {
-    tokens = await login({ orgCode: 'taichung-fab', accountName: 'leader.chen', password: 'Leader@123456789' })
-    localStorage.setItem(ACCESS_TOKEN_KEY, tokens.accessToken)
+    await login({ orgCode: 'taichung-fab', accountName: 'leader.chen', password: 'Leader@123456789' })
   })
 
-  it('can call login API with valid credentials', async () => {
+  it('can call login API with valid credentials and receives token info', async () => {
     const result = await login({ orgCode: 'taichung-fab', accountName: 'leader.chen', password: 'Leader@123456789' })
+    // Body tokens are still returned for forward-compat; frontend ignores them
     expect(result.accessToken).toBeTruthy()
-    expect(result.refreshToken).toBeTruthy()
     expect(result.tokenType).toBe('Bearer')
   })
 
-  it('can get me after setting auth token', async () => {
+  it('can get me after login (session established via cookie/in-memory mock)', async () => {
     const user = await getMe()
     expect(user.accountName).toBe('leader.chen')
     expect(user.displayName).toBeTruthy()

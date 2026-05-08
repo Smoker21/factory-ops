@@ -18,6 +18,14 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api/, ''),
       },
+      // Proxy /v1 directly so that cookie SameSite requirements are satisfied
+      // when running frontend (port 5173) alongside backend (port 8080).
+      // With this proxy the browser sees requests as same-origin.
+      '/v1': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        cookieDomainRewrite: 'localhost',
+      },
     },
   },
   test: {

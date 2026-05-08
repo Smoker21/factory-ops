@@ -24,14 +24,20 @@ data class TokenPairResponse(
     val tokenType: String = "Bearer"
 )
 
+/**
+ * refreshToken is optional: M5.3+ clients send the token via the refresh_token httpOnly cookie.
+ * Body field retained for backward compatibility (§FR-1.8 — M6 may remove it).
+ */
 data class RefreshRequest(
-    @field:NotBlank(message = "refreshToken is required")
-    val refreshToken: String = ""
+    val refreshToken: String? = null
 )
 
+/**
+ * refreshToken is optional: M5.3+ clients use the refresh_token cookie.
+ * Body field retained for backward compatibility.
+ */
 data class LogoutRequest(
-    @field:NotBlank(message = "refreshToken is required")
-    val refreshToken: String = ""
+    val refreshToken: String? = null
 )
 
 data class ChangePasswordRequest(

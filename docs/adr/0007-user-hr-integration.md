@@ -344,3 +344,33 @@ factory-ops:
 | `mock`(預設) | `MockHrClient` | 5 筆寫死資料 |
 | `h2` | `H2HrClient` | `test_data/hr_employees.csv` → H2 in-memory DB |
 | `external` | (待實作) | 真實 HR REST API |
+
+---
+
+## v1.4 Amendment(2026-05-08)— Manager 休假代理由 HR 端負責(Q-19 拍板)
+
+### 背景
+
+v1.3 ADR-0010 引入「單 Manager + 多 Leaders」模型後,衍生 Q-19:**Organization manager 休假時是否需要正式 deputy 欄位**?2026-05-07 規劃會議拍板:**不在 Factory Ops 系統建模 deputy**;改由 HR 端的代理機制 + Operations 流程處理。
+
+### Decision
+
+1. **本系統不引入 `Organization.deputyManagerId` 欄位**;Manager 休假代理一律透過 `POST /orgs/{orgId}/transfer-manager`(ORG_ADMIN 操作)暫代,休假結束再轉回。
+2. **代理人選由 HR 端決定**:若真實 HR 服務有「代理人」概念(例:某 employee 休假期間由另一 employee 代為履行職務),該訊息**屬於 HR domain**,不流入 Factory Ops 的領域模型。
+3. **HR Mock REST API 不必擴充 deputy 欄位**(本期 MVP);未來真實 HR 串接時若需查詢代理人,屬於 ORG_ADMIN 操作端的 UI 提示資料(由 HR API 直接讀,不存 Factory Ops)。
+4. **`HRUserProfile`** 不必加 deputy 相關欄位;若日後 HR 端需通知本系統「某 manager 已交出職權」,屬於 webhook/event 流(不在本 ADR 範圍)。
+
+### Consequences
+
+**正面**:
+- Factory Ops 領域模型保持簡潔(每節點唯一 `managerId`,語意明確)
+- HR / Factory Ops 職責分離:HR 管「誰是合法代理人」,Factory Ops 管「目前誰是 managerId」
+- ORG_ADMIN 流程簡單可預測(就是一次 `transfer-manager`)
+
+**負面**:
+- 若 ORG_ADMIN 忘記在休假結束後轉回,managerId 會停留在代理人身上 — 需 Operations SOP 補(本系統不自動偵測)
+- 跨系統一致性靠人:HR 端的「代理人結束」與本系統的「transfer-manager 轉回」不會自動同步
+
+**後續工作**:
+- 無新 schema / API change(M5.1 不涉 code)
+- 文件更新:`docs/spec/requirements.md` §FR-Org.12 + §1.3 補充說明 + §8.2 拍板表格(已隨 v1.4 同步)

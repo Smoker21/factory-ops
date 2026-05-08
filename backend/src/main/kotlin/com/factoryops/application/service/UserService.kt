@@ -17,9 +17,55 @@ import jakarta.enterprise.context.ApplicationScoped
 import jakarta.transaction.Transactional
 import mu.KotlinLogging
 import org.bson.types.ObjectId
+import java.security.SecureRandom
 import java.time.Instant
 
 private val logger = KotlinLogging.logger {}
+
+// S-011: Temporary password charset excludes visually ambiguous characters (0/O/l/1)
+private val TEMP_PASSWORD_CHARSET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789@#$%&*+".toCharArray()
+private const val TEMP_PASSWORD_LENGTH = 16
+private val secureRandom = SecureRandom()
+
+// S-011: Password strength: >= 12 chars, >= 3 of: uppercase / lowercase / digit / symbol
+private val UPPERCASE_REGEX = Regex("[A-Z]")
+private val LOWERCASE_REGEX = Regex("[a-z]")
+private val DIGIT_REGEX = Regex("[0-9]")
+private val SYMBOL_REGEX = Regex("[^A-Za-z0-9]")
+
+/**
+ * Validates that a password meets the strength requirements.
+ * Requirement: length >= 12, at least 3 of the 4 character classes (upper/lower/digit/symbol).
+ */
+internal fun validatePasswordStrength(password: String) {
+    if (password.length < 12) {
+        throw ValidationException(
+            "New password must be at least 12 characters long",
+            "password_too_short",
+            "newPassword"
+        )
+    }
+    val classCount = listOf(UPPERCASE_REGEX, LOWERCASE_REGEX, DIGIT_REGEX, SYMBOL_REGEX)
+        .count { it.containsMatchIn(password) }
+    if (classCount < 3) {
+        throw ValidationException(
+            "New password must contain at least 3 of: uppercase letters, lowercase letters, digits, symbols",
+            "password_too_weak",
+            "newPassword"
+        )
+    }
+}
+
+/**
+ * Generates a 16-character cryptographically random temporary password.
+ * Excludes visually ambiguous characters (0/O/l/1).
+ * IMPORTANT: caller must return this value to the client and must NOT log it.
+ */
+internal fun generateTemporaryPassword(): String {
+    return (1..TEMP_PASSWORD_LENGTH)
+        .map { TEMP_PASSWORD_CHARSET[secureRandom.nextInt(TEMP_PASSWORD_CHARSET.size)] }
+        .joinToString("")
+}
 
 /**
  * NOTE: @Transactional is applied at class level. MongoDB transactions require a replica set.
@@ -71,15 +117,17 @@ class UserService(
 
     /**
      * Creates a user by syncing from HR (identified by accountName).
-     * Requires a default password to be set.
+     *
+     * S-011: Generates a cryptographically random 16-character temporary password internally.
+     * The plain-text temporary password is returned in [CreateUserResult.temporaryPassword]
+     * for one-time display to the caller. It is never logged.
      */
     fun createUser(
         rootOrgId: String,
         accountName: String,
         roles: List<Role>,
-        defaultPassword: String,
         actorId: String
-    ): User {
+    ): CreateUserResult {
         val rootId = ObjectId(rootOrgId)
 
         // Check for existing
@@ -95,6 +143,9 @@ class UserService(
         if (!hrEmployee.active) {
             throw ValidationException("Employee is not active in HR system", "employee_not_active")
         }
+
+        // S-011: Generate temporary password; never log it
+        val temporaryPassword = generateTemporaryPassword()
 
         val now = Instant.now()
         val effectiveRoles = if (roles.isEmpty()) {
@@ -114,19 +165,22 @@ class UserService(
         }
         userRepository.persist(userDoc)
 
-        // Store password (never log the password)
+        // Store bcrypt hash (never store or log plain-text password)
         val credDoc = com.factoryops.persistence.document.UserCredentialsDocument().also { c ->
             c.userId = userDoc.id!!
             c.rootOrgId = rootId
-            c.passwordHash = passwordHasher.hash(defaultPassword)
+            c.passwordHash = passwordHasher.hash(temporaryPassword)
             c.algorithm = "BCRYPT"
             c.updatedAt = now
         }
         credentialsRepository.persist(credDoc)
 
         logger.info { "Created user [${userDoc.id}] accountName=$accountName" }
-        return UserMapper.toDomain(userDoc)
+        return CreateUserResult(user = UserMapper.toDomain(userDoc), temporaryPassword = temporaryPassword)
     }
+
+    /** Result of createUser — carries the one-time temporary password for display to caller. */
+    data class CreateUserResult(val user: User, val temporaryPassword: String)
 
     @Transactional
     fun updateUser(userId: String, rootOrgId: String, roles: List<Role>?, active: Boolean?, actorId: String): User {

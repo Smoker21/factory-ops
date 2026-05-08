@@ -4,7 +4,11 @@ import com.factoryops.persistence.document.UserCredentialsDocument
 import com.factoryops.persistence.document.UserDocument
 import io.quarkus.mongodb.panache.kotlin.PanacheMongoRepository
 import jakarta.enterprise.context.ApplicationScoped
+import org.bson.Document
 import org.bson.types.ObjectId
+import java.util.regex.Pattern
+
+private const val KEYWORD_MAX_LENGTH = 64
 
 @ApplicationScoped
 class UserRepository : PanacheMongoRepository<UserDocument> {
@@ -21,15 +25,44 @@ class UserRepository : PanacheMongoRepository<UserDocument> {
     fun findActiveByRootOrgId(rootOrgId: ObjectId): List<UserDocument> =
         find("rootOrgId = ?1 and active = ?2 and deletedAt is null", rootOrgId, true).list()
 
+    /**
+     * Searches users by keyword using prefix matching against accountName, displayName,
+     * email, and employeeNo.
+     *
+     * S-013: Input is sanitised using Pattern.quote() to prevent ReDoS.
+     * Wildcard characters '*' and '?' are rejected.
+     * Keyword is capped at 64 characters.
+     * Uses native MongoDB $regex with case-insensitive prefix matching (^<escaped>).
+     */
     fun searchByKeyword(rootOrgId: ObjectId, keyword: String): List<UserDocument> {
-        val query = "rootOrgId = ?1 and deletedAt is null and (accountName like ?2 or displayName like ?2 or email like ?2 or employeeNo like ?2)"
-        return find(query, rootOrgId, ".*$keyword.*").list()
+        val trimmed = keyword.trim()
+        require(trimmed.length <= KEYWORD_MAX_LENGTH) {
+            "Search keyword must not exceed $KEYWORD_MAX_LENGTH characters"
+        }
+        require(!trimmed.contains('*') && !trimmed.contains('?')) {
+            "Wildcard characters '*' and '?' are not allowed in search keywords"
+        }
+
+        // Escape all regex metacharacters; use ^ prefix anchor to avoid full-scan regex
+        val escaped = Pattern.quote(trimmed)
+        val prefixRegex = Document("\$regex", "^$escaped").append("\$options", "i")
+
+        val filter = Document("rootOrgId", rootOrgId)
+            .append("deletedAt", null)
+            .append("\$or", listOf(
+                Document("accountName", prefixRegex),
+                Document("displayName", prefixRegex),
+                Document("email", prefixRegex),
+                Document("employeeNo", prefixRegex)
+            ))
+
+        return find(filter).list()
     }
 
-    fun findWithCursor(rootOrgId: ObjectId, cursor: org.bson.types.ObjectId?, limit: Int): List<UserDocument> {
-        val baseFilter = org.bson.Document("rootOrgId", rootOrgId).append("deletedAt", null)
+    fun findWithCursor(rootOrgId: ObjectId, cursor: ObjectId?, limit: Int): List<UserDocument> {
+        val baseFilter = Document("rootOrgId", rootOrgId).append("deletedAt", null)
         val filter = if (cursor != null) {
-            org.bson.Document("\$and", listOf(baseFilter, org.bson.Document("_id", org.bson.Document("\$gt", cursor))))
+            Document("\$and", listOf(baseFilter, Document("_id", Document("\$gt", cursor))))
         } else baseFilter
         return find(filter).page(0, limit).list()
     }

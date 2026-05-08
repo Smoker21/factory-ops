@@ -249,9 +249,24 @@ class DispatchService(
         val doc = actionRequestRepository.findByIdAndRootOrg(ObjectId(actionRequestId), ObjectId(rootOrgId))
             ?: throw NotFoundException("ActionRequest not found: $actionRequestId")
 
+        // C-005: Only SUBMITTED ActionRequests may be converted to a task
+        // (State machine: SUBMITTED → TRIAGED via convert-to-task; RESOLVED/REJECTED may not be re-converted)
+        // Note: brief referenced "ACCEPTED" which does not exist in ActionRequestStatus enum;
+        // SUBMITTED is the correct pre-condition per domain model (ADR-0008).
+        val currentStatus = ActionRequestStatus.valueOf(doc.status)
+        if (currentStatus != ActionRequestStatus.SUBMITTED) {
+            throw BusinessRuleViolationException(
+                "ActionRequest must be SUBMITTED to convert; got $currentStatus",
+                "invalid_ar_status"
+            )
+        }
+
         if (doc.linkedTaskId != null) {
             throw ConflictException("ActionRequest already converted to a task", "already_converted")
         }
+
+        // C-005: Explicit severity → priority mapping (no silent fallback)
+        val mappedPriority = severityToPriority(SeverityLevel.valueOf(doc.severity.level))
 
         val task = taskService.createTask(
             rootOrgId = rootOrgId,
@@ -259,7 +274,7 @@ class DispatchService(
             type = taskType,
             title = taskTitle,
             descriptionMarkdown = doc.descriptionMarkdown,
-            priority = Priority.NORMAL,
+            priority = mappedPriority,
             ownerId = doc.ownerId?.toHexString() ?: actorId,
             assignees = listOfNotNull(doc.ownerId?.toHexString()),
             attributes = emptyMap(),
@@ -278,5 +293,15 @@ class DispatchService(
         actionRequestRepository.update(doc)
 
         return task
+    }
+
+    /**
+     * C-005: Explicit severity-to-priority mapping. Unknown severity throws rather than silently defaulting.
+     */
+    private fun severityToPriority(severity: SeverityLevel): Priority = when (severity) {
+        SeverityLevel.LOW -> Priority.LOW
+        SeverityLevel.MEDIUM -> Priority.NORMAL
+        SeverityLevel.HIGH -> Priority.HIGH
+        SeverityLevel.CRITICAL -> Priority.URGENT
     }
 }

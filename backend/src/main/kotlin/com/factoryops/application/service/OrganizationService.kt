@@ -11,7 +11,9 @@ import com.factoryops.interfaces.exception.ValidationException
 import com.factoryops.persistence.document.OrgSettingsDocument
 import com.factoryops.persistence.mapper.OrganizationMapper
 import com.factoryops.persistence.mapper.UserMapper
+import com.factoryops.persistence.repository.GroupRepository
 import com.factoryops.persistence.repository.OrganizationRepository
+import com.factoryops.persistence.repository.ProjectRepository
 import com.factoryops.persistence.repository.UserRepository
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.transaction.Transactional
@@ -29,7 +31,9 @@ private val logger = KotlinLogging.logger {}
 @ApplicationScoped
 class OrganizationService(
     private val orgRepository: OrganizationRepository,
-    private val userRepository: UserRepository
+    private val userRepository: UserRepository,
+    private val projectRepository: ProjectRepository,
+    private val groupRepository: GroupRepository
 ) {
 
     @Transactional
@@ -273,6 +277,16 @@ class OrganizationService(
         val childCount = orgRepository.countChildren(doc.id!!)
         if (childCount > 0) {
             throw ConflictException("Cannot delete organization with active children. Remove children first.", "has_children")
+        }
+
+        // C-014: block deletion if active projects or groups exist under this org
+        val activeProjectCount = projectRepository.countActiveByOrg(doc.id!!)
+        val activeGroupCount = groupRepository.countByOrg(doc.id!!)
+        if (activeProjectCount > 0 || activeGroupCount > 0) {
+            throw ConflictException(
+                "Cannot delete organization: it has $activeProjectCount active project(s) and $activeGroupCount group(s). Remove them first.",
+                "has_active_resources"
+            )
         }
 
         doc.deletedAt = Instant.now()

@@ -27,6 +27,13 @@ class GroupRepository : PanacheMongoRepository<GroupDocument> {
         return find("rootOrgId = ?1 and organizationId in ?2 and deletedAt is null", rootOrgId, organizationIds).list()
     }
 
+    /**
+     * C-014: Counts groups (non-deleted) belonging to a given organization.
+     * Used to block org deletion when groups exist.
+     */
+    fun countByOrg(organizationId: ObjectId): Long =
+        count("organizationId = ?1 and deletedAt is null", organizationId)
+
     fun findWithCursor(rootOrgId: ObjectId, cursor: ObjectId?, limit: Int): List<GroupDocument> {
         val baseFilter = Document("rootOrgId", rootOrgId).append("deletedAt", null)
         val filter = if (cursor != null) {

@@ -18,6 +18,7 @@ import java.time.ZoneOffset
 
 /**
  * Unit tests for User DTO validation constraints and domain-to-response converters.
+ * Updated for S-011: CreateUserRequest no longer carries defaultPassword (generated server-side).
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class UserDtoTest {
@@ -33,11 +34,8 @@ class UserDtoTest {
 
     @Test
     fun `CreateUserRequest happy path passes validation`() {
-        // Given
-        val dto = CreateUserRequest(
-            accountName = "operator.li",
-            defaultPassword = "Operator@123"
-        )
+        // Given: S-011 — no longer requires defaultPassword in request body
+        val dto = CreateUserRequest(accountName = "operator.li")
 
         // When
         val violations = validator.validate(dto)
@@ -49,7 +47,7 @@ class UserDtoTest {
     @Test
     fun `CreateUserRequest with blank accountName fails validation`() {
         // Given
-        val dto = CreateUserRequest(accountName = "", defaultPassword = "Operator@123")
+        val dto = CreateUserRequest(accountName = "")
 
         // When
         val violations = validator.validate(dto)
@@ -62,49 +60,13 @@ class UserDtoTest {
     fun `CreateUserRequest with accountName exceeding 30 chars fails validation`() {
         // Given
         val longName = "a".repeat(31)
-        val dto = CreateUserRequest(accountName = longName, defaultPassword = "Operator@123")
+        val dto = CreateUserRequest(accountName = longName)
 
         // When
         val violations = validator.validate(dto)
 
         // Then
         assertTrue(violations.any { it.propertyPath.toString() == "accountName" })
-    }
-
-    @Test
-    fun `CreateUserRequest with blank password fails validation`() {
-        // Given
-        val dto = CreateUserRequest(accountName = "operator.li", defaultPassword = "")
-
-        // When
-        val violations = validator.validate(dto)
-
-        // Then
-        assertTrue(violations.any { it.propertyPath.toString() == "defaultPassword" })
-    }
-
-    @Test
-    fun `CreateUserRequest with password shorter than 8 chars fails validation`() {
-        // Given
-        val dto = CreateUserRequest(accountName = "operator.li", defaultPassword = "Ab@1234")
-
-        // When
-        val violations = validator.validate(dto)
-
-        // Then
-        assertTrue(violations.any { it.propertyPath.toString() == "defaultPassword" })
-    }
-
-    @Test
-    fun `CreateUserRequest with exactly 8 char password passes validation`() {
-        // Given
-        val dto = CreateUserRequest(accountName = "operator.li", defaultPassword = "Ab@12345")
-
-        // When
-        val violations = validator.validate(dto)
-
-        // Then
-        assertTrue(violations.isEmpty())
     }
 
     // ─── UpdateUserRequest (all optional) ────────────────────────────────────────

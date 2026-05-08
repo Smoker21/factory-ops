@@ -7,15 +7,16 @@ import { getInitials } from '@/lib/utils'
 import logger from '@/lib/logger'
 
 export function UserMenu() {
-  const { user, logout, refreshToken } = useAuth()
+  const { user, logout } = useAuth()
   const { t } = useTranslation()
   const navigate = useNavigate()
 
   const handleLogout = async () => {
     try {
-      if (refreshToken) {
-        await apiLogout(refreshToken)
-      }
+      // POST /auth/logout — no body; backend reads the refresh_token cookie,
+      // adds its jti to the revoke blacklist, and returns Max-Age=0 for all
+      // three auth cookies (ADR-0015 §Decision).
+      await apiLogout()
     } catch (err) {
       logger.warn('Logout API failed, clearing local state anyway', err)
     } finally {

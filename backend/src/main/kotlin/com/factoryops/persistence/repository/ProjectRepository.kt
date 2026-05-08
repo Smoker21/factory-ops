@@ -34,6 +34,13 @@ class ProjectRepository : PanacheMongoRepository<ProjectDocument> {
         find(Document("rootOrgId", rootOrgId).append("memberIds", memberId).append("deletedAt", null)).list()
 
     /**
+     * C-014: Counts active (non-deleted) projects belonging to a given organization.
+     * Used to block org deletion when active projects exist.
+     */
+    fun countActiveByOrg(organizationId: ObjectId): Long =
+        count("organizationId = ?1 and deletedAt is null", organizationId)
+
+    /**
      * Cursor-based pagination: returns up to [limit] documents with _id > [cursor] (if provided).
      * Caller should request limit+1 to detect hasMore.
      */

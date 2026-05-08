@@ -134,7 +134,6 @@ class UserServiceUnitTest {
                 rootOrgId = rootId.toHexString(),
                 accountName = "test.user",
                 roles = emptyList(),
-                defaultPassword = "TestPass@123",
                 actorId = actorId.toHexString()
             )
         }
@@ -152,7 +151,6 @@ class UserServiceUnitTest {
                 rootOrgId = rootId.toHexString(),
                 accountName = "nonexistent.user",
                 roles = emptyList(),
-                defaultPassword = "TestPass@123",
                 actorId = actorId.toHexString()
             )
         }
@@ -171,7 +169,6 @@ class UserServiceUnitTest {
                 rootOrgId = rootId.toHexString(),
                 accountName = "inactive.user",
                 roles = emptyList(),
-                defaultPassword = "TestPass@123",
                 actorId = actorId.toHexString()
             )
         }
@@ -193,18 +190,19 @@ class UserServiceUnitTest {
         }.whenever(userRepository).persist(capturedUser.capture())
         doNothing().whenever(credentialsRepository).persist(any<UserCredentialsDocument>())
 
-        // When
-        userService.createUser(
+        // When: S-011 — no longer passes defaultPassword; service generates it
+        val result = userService.createUser(
             rootOrgId = rootId.toHexString(),
             accountName = "new.user",
             roles = listOf(Role.ENGINEER, Role.QA),
-            defaultPassword = "TestPass@123",
             actorId = actorId.toHexString()
         )
 
         // Then
         val persistedUser = capturedUser.firstValue
         assertEquals(listOf("ENGINEER", "QA"), persistedUser.roles)
+        // S-011: temporaryPassword is returned in result and is 16 chars long
+        assertEquals(16, result.temporaryPassword.length)
     }
 
     @Test
@@ -223,18 +221,19 @@ class UserServiceUnitTest {
         }.whenever(userRepository).persist(capturedUser.capture())
         doNothing().whenever(credentialsRepository).persist(any<UserCredentialsDocument>())
 
-        // When
-        userService.createUser(
+        // When: S-011 — no longer passes defaultPassword; service generates it
+        val result = userService.createUser(
             rootOrgId = rootId.toHexString(),
             accountName = "new.user",
             roles = emptyList(),  // empty → use HR defaults
-            defaultPassword = "TestPass@123",
             actorId = actorId.toHexString()
         )
 
         // Then: HR default role is OPERATOR
         val persistedUser = capturedUser.firstValue
         assertTrue(persistedUser.roles.contains("OPERATOR"))
+        // S-011: temporaryPassword is returned; must not be blank
+        assertTrue(result.temporaryPassword.isNotBlank())
     }
 
     // ─── updateUser ────────────────────────────────────────────────────────────

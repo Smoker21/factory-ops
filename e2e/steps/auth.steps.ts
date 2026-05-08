@@ -1,7 +1,7 @@
 import { Given, When, Then } from '@cucumber/cucumber';
 import { expect } from '@playwright/test';
 import type { FactoryOpsWorld } from '../support/world';
-import { loginAs, injectAuthToLocalStorage } from '../support/api';
+import { loginAs, injectAuthCookies } from '../support/api';
 import { FRONTEND_BASE_URL } from '../playwright.config';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -83,10 +83,16 @@ Then('頂部應顯示我的姓名 {string}', async function (
   await expect(locator).toBeVisible({ timeout: 8000 });
 });
 
-Then('localStorage 應有 {string}', async function (this: FactoryOpsWorld, key: string) {
-  const value = await this.page.evaluate((k: string) => localStorage.getItem(k), key);
-  expect(value).not.toBeNull();
-  expect(value!.length).toBeGreaterThan(10);
+/**
+ * Cookie-based session check: after login, the browser should hold an
+ * access_token cookie set by the server's Set-Cookie response.
+ * Replaces the legacy "localStorage 應有 factory_ops_access_token" assertion.
+ */
+Then('瀏覽器 cookies 應包含 access_token', async function (this: FactoryOpsWorld) {
+  const cookies = await this.context.cookies();
+  const accessCookie = cookies.find((c) => c.name === 'access_token');
+  expect(accessCookie, 'access_token cookie should be present after login').toBeDefined();
+  expect(accessCookie!.value.length).toBeGreaterThan(10);
 });
 
 // ----------------------------------------------------------------------------
@@ -127,24 +133,23 @@ Then('我應該停留在 {string}', async function (this: FactoryOpsWorld, expec
 });
 
 Then('應該看到「帳號或密碼錯誤,請重試」', async function (this: FactoryOpsWorld) {
-  // BUG-AUTH-1: The axios interceptor in frontend/src/api/client.ts intercepts ALL 401
-  // responses and attempts token refresh, including when /auth/login returns 401 for wrong
-  // password. The refresh also fails (no refresh token), calling redirectToLogin() which
-  // stays on /login without setting React error state. The LoginPage catch block never
-  // receives the original 401, so "帳號或密碼錯誤" is never rendered.
-  // Fix: skip token refresh when the failing request is /auth/login itself.
   await expect(this.page.getByText('帳號或密碼錯誤', { exact: false })).toBeVisible({ timeout: 8000 });
 });
 
-Then('localStorage 不應該有 token', async function (this: FactoryOpsWorld) {
-  const accessToken = await this.page.evaluate(() =>
-    localStorage.getItem('factory_ops_access_token')
-  );
-  expect(accessToken).toBeNull();
+/**
+ * Verify no auth cookie was set on failed login.
+ * Replaces legacy "localStorage 不應該有 token" assertion.
+ */
+Then('瀏覽器不應有 access_token cookie', async function (this: FactoryOpsWorld) {
+  const cookies = await this.context.cookies();
+  const accessCookie = cookies.find((c) => c.name === 'access_token');
+  // Either absent, or has empty/expired value (Max-Age=0 from failed login)
+  const isAbsentOrCleared = !accessCookie || accessCookie.value === '' || accessCookie.value.length < 5;
+  expect(isAbsentOrCleared).toBe(true);
 });
 
 // ----------------------------------------------------------------------------
-// Scenario: 缺 orgCode 被 client validation 攔下
+// Scenario: 缺 orgCode 直接被 client validation 攔下
 // ----------------------------------------------------------------------------
 
 When('我清空組織代號欄位', async function (this: FactoryOpsWorld) {
@@ -161,26 +166,30 @@ Then('不應該有 POST 到 \\/v1\\/auth\\/login 的網路請求', async functio
   this: FactoryOpsWorld
 ) {
   // Client-side validation prevents form submission. Verify by checking we are still on /login
-  // and no redirect happened (no token in localStorage)
   const url = new URL(this.page.url());
   expect(url.pathname).toBe('/login');
-  const token = await this.page.evaluate(() => localStorage.getItem('factory_ops_access_token'));
-  expect(token).toBeNull();
+  // No auth cookie should have been set
+  const cookies = await this.context.cookies();
+  const accessCookie = cookies.find((c) => c.name === 'access_token');
+  expect(!accessCookie || accessCookie.value === '').toBe(true);
 });
 
 // ----------------------------------------------------------------------------
 // Scenario: 未登入造訪受保護頁面
 // ----------------------------------------------------------------------------
 
+/**
+ * Cookie-based "not logged in": clear browser cookies (no auth cookie present).
+ * The AuthProvider probes GET /me which returns 401 with no cookie → user stays unauthenticated.
+ *
+ * The step name retains "(localStorage 已清空)" phrasing to match the feature file Gherkin text;
+ * the implementation however uses cookie clearing (ADR-0015).
+ */
 Given(/^我尚未登入\(localStorage 已清空\)$/, async function (this: FactoryOpsWorld) {
-  // Navigate to a neutral page first to allow localStorage manipulation
+  // Navigate to a neutral page first
   await this.page.goto('about:blank');
+  // Clear all cookies so there is no access_token / refresh_token / XSRF-TOKEN
   await this.context.clearCookies();
-  // addInitScript runs before every page load
-  await this.context.addInitScript(() => {
-    localStorage.removeItem('factory_ops_access_token');
-    localStorage.removeItem('factory_ops_refresh_token');
-  });
 });
 
 When('我直接造訪 {string}', async function (this: FactoryOpsWorld, path: string) {
@@ -210,7 +219,8 @@ When('我用 admin.system 登入', async function (this: FactoryOpsWorld) {
 
 Given('我以 admin.system 登入', async function (this: FactoryOpsWorld) {
   const user = await loginAs(this, 'admin.system', USERS['admin.system'].password);
-  await injectAuthToLocalStorage(this, user.accessToken, user.refreshToken);
+  // Inject auth cookies into the browser context so page.goto('/') loads as authenticated
+  await injectAuthCookies(this, user.accessToken, user.refreshToken);
   await this.page.goto(`${FRONTEND_BASE_URL}/`);
   await this.page.waitForLoadState('networkidle');
 });
@@ -248,4 +258,78 @@ When('我點擊使用者選單中的「登出」', async function (this: Factory
   } else {
     await logoutByText.first().click();
   }
+});
+
+// ----------------------------------------------------------------------------
+// Scenario: reload 仍登入 (cookie persistent session)
+// ----------------------------------------------------------------------------
+
+Given('我已成功登入', async function (this: FactoryOpsWorld) {
+  const user = await loginAs(this, 'admin.system', USERS['admin.system'].password);
+  await injectAuthCookies(this, user.accessToken, user.refreshToken);
+  await this.page.goto(`${FRONTEND_BASE_URL}/`);
+  await this.page.waitForLoadState('networkidle');
+  // Confirm we're on the home page
+  const url = new URL(this.page.url());
+  expect(url.pathname).toBe('/');
+});
+
+When('我 reload 頁面', async function (this: FactoryOpsWorld) {
+  await this.page.reload();
+  await this.page.waitForLoadState('networkidle');
+});
+
+Then('仍應停留在受保護頁面,不被導回登入頁', async function (this: FactoryOpsWorld) {
+  const url = new URL(this.page.url());
+  expect(url.pathname).not.toBe('/login');
+});
+
+// ----------------------------------------------------------------------------
+// Scenario: 登出後 reload 不再登入
+// ----------------------------------------------------------------------------
+
+When('我完成登出流程', async function (this: FactoryOpsWorld) {
+  // Navigate to home and perform logout via UI
+  await this.page.goto(`${FRONTEND_BASE_URL}/`);
+  await this.page.waitForLoadState('networkidle');
+
+  const triggerByTestId = this.page.locator('[data-testid="user-menu-trigger"]');
+  const hasTrigger = await triggerByTestId.count();
+
+  if (hasTrigger > 0) {
+    await triggerByTestId.click();
+  } else {
+    await this.page.getByText('System Admin').first().click();
+  }
+
+  await this.page.waitForTimeout(500);
+
+  const logoutByTestId = this.page.locator('[data-testid="logout-menu-item"]');
+  const logoutByRole = this.page.getByRole('menuitem', { name: /登出/i });
+  const logoutByText = this.page.getByText('登出', { exact: true });
+
+  if (await logoutByTestId.count() > 0) {
+    await logoutByTestId.click();
+  } else if (await logoutByRole.count() > 0) {
+    await logoutByRole.click();
+  } else {
+    await logoutByText.first().click();
+  }
+
+  // Wait until redirected to /login
+  await this.page.waitForURL((url) => new URL(url).pathname === '/login', { timeout: 8000 });
+});
+
+Then('reload 後應被導回登入頁', async function (this: FactoryOpsWorld) {
+  await this.page.reload();
+  await this.page.waitForLoadState('networkidle');
+
+  // After logout, cookies are cleared (Max-Age=0). GET /me should return 401.
+  // ProtectedRoute should redirect to /login.
+  await this.page.waitForURL(
+    (url) => new URL(url).pathname === '/login',
+    { timeout: 10000 }
+  );
+  const url = new URL(this.page.url());
+  expect(url.pathname).toBe('/login');
 });

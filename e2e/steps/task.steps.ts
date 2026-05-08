@@ -2,8 +2,6 @@ import { Given, When, Then } from '@cucumber/cucumber';
 import { expect } from '@playwright/test';
 import type { FactoryOpsWorld } from '../support/world';
 import {
-  loginAs,
-  injectAuthToLocalStorage,
   seedProject,
   seedTask,
   fetchTask,

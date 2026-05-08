@@ -16,13 +16,13 @@
     並且 我按下「登入」
     那麼 我應該被導向到 "/"
     並且 頂部應顯示我的姓名 "System Admin"
-    並且 localStorage 應有 "factory_ops_access_token"
+    並且 瀏覽器 cookies 應包含 access_token
 
   情境: 密碼錯誤顯示通用錯誤訊息
     當 我打開登入頁並用 "admin.system" / "wrong" 登入
     那麼 我應該停留在 "/login"
     並且 應該看到「帳號或密碼錯誤,請重試」
-    並且 localStorage 不應該有 token
+    並且 瀏覽器不應有 access_token cookie
 
   情境: 缺 orgCode 直接被 client validation 攔下
     當 我打開登入頁
@@ -38,8 +38,18 @@
     當 我用 admin.system 登入
     那麼 URL 應變為 "/projects"
 
-  情境: 登出清除 token 並導回登入頁
+  情境: 登出清除 cookie 並導回登入頁
     假設 我以 admin.system 登入
     當 我點擊使用者選單中的「登出」
     那麼 URL 應變為 "/login"
-    並且 localStorage 不應該有 token
+    並且 瀏覽器不應有 access_token cookie
+
+  情境: reload 仍登入(cookie 持久 session)
+    假設 我已成功登入
+    當 我 reload 頁面
+    那麼 仍應停留在受保護頁面,不被導回登入頁
+
+  情境: 登出後 reload 不再登入
+    假設 我已成功登入
+    當 我完成登出流程
+    那麼 reload 後應被導回登入頁

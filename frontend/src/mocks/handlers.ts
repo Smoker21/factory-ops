@@ -260,6 +260,99 @@ function makeToken(user: User): string {
   return `${header}.${body}.mock_signature`
 }
 
+// Track current session user in the mock (set on login, cleared on logout)
+let currentMockUser: (User & { password: string }) | null = null
+
+/**
+ * Reset the in-memory session state between tests.
+ * Call this in a beforeEach / afterEach in test setup to ensure test isolation.
+ * `server.resetHandlers()` only resets per-test handler overrides — it does NOT
+ * reset module-scoped state like currentMockUser.
+ */
+export function resetMockSession(): void {
+  currentMockUser = null
+}
+
+// Build the three Set-Cookie headers that the real backend emits.
+// MSW v2 requires appending multiple Set-Cookie values to a Headers instance
+// because a single header string cannot represent two cookies with the same
+// field name.
+const MOCK_XSRF = 'mock-xsrf-token'
+
+function buildAuthCookieHeaders(user: User): Headers {
+  const accessToken = makeToken(user)
+  const refreshToken = `refresh_${user.id}_${Date.now()}`
+  const headers = new Headers()
+  // access_token: httpOnly (simulated — jsdom cannot set httpOnly from JS, but
+  // the header is emitted for realism; the cookie will be readable in tests)
+  headers.append(
+    'Set-Cookie',
+    `access_token=${accessToken}; Path=/v1; Max-Age=900; SameSite=Lax`
+  )
+  // refresh_token: httpOnly
+  headers.append(
+    'Set-Cookie',
+    `refresh_token=${refreshToken}; Path=/v1/auth; Max-Age=604800; SameSite=Lax`
+  )
+  // XSRF-TOKEN: non-httpOnly (must be readable by JS for CSRF echo)
+  headers.append(
+    'Set-Cookie',
+    `XSRF-TOKEN=${MOCK_XSRF}; Path=/v1; Max-Age=604800; SameSite=Lax`
+  )
+  return headers
+}
+
+function buildClearCookieHeaders(): Headers {
+  const headers = new Headers()
+  headers.append('Set-Cookie', 'access_token=; Path=/v1; Max-Age=0; SameSite=Lax')
+  headers.append('Set-Cookie', 'refresh_token=; Path=/v1/auth; Max-Age=0; SameSite=Lax')
+  headers.append('Set-Cookie', 'XSRF-TOKEN=; Path=/v1; Max-Age=0; SameSite=Lax')
+  return headers
+}
+
+// Decode the access_token cookie value to retrieve accountName.
+// Falls back to Authorization header for backward-compat with existing Bearer tests.
+function resolveUserFromRequest(request: Request): (User & { password: string }) | null {
+  // Cookie-based auth (new path)
+  const cookieHeader = request.headers.get('Cookie') ?? ''
+  const accessTokenMatch = cookieHeader.match(/(?:^|;\s*)access_token=([^;]+)/)
+  if (accessTokenMatch) {
+    try {
+      const token = accessTokenMatch[1]
+      const parts = token.split('.')
+      if (parts.length >= 2) {
+        const payload = JSON.parse(atob(parts[1])) as { accountName: string }
+        const found = SEED_USERS[payload.accountName]
+        if (found) return found
+      }
+    } catch {
+      // fall through to next method
+    }
+  }
+
+  // In-memory session set by the login handler (works in jsdom where
+  // document.cookie and fetch cookie jar interact differently)
+  if (currentMockUser) return currentMockUser
+
+  // Bearer header fallback for backward-compat with existing tests
+  const auth = request.headers.get('Authorization')
+  if (auth?.startsWith('Bearer ')) {
+    try {
+      const token = auth.slice(7)
+      const parts = token.split('.')
+      if (parts.length >= 2) {
+        const payload = JSON.parse(atob(parts[1])) as { accountName: string }
+        const found = SEED_USERS[payload.accountName]
+        if (found) return found
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  return null
+}
+
 export const handlers = [
   // Auth
   http.post(`${BASE_URL}/auth/login`, async ({ request }) => {
@@ -271,50 +364,52 @@ export const handlers = [
         { status: 401 }
       )
     }
+    // Track session for jsdom environments where cookie jar isn't shared
+    currentMockUser = user
+
+    const { password: _pass, ...userWithoutPassword } = user
+    const cookieHeaders = buildAuthCookieHeaders(user)
+
+    // Keep body tokens for forward-compat; frontend ignores them (ADR-0015).
     const tokenPair: TokenPair = {
       accessToken: makeToken(user),
       refreshToken: `refresh_${user.id}_${Date.now()}`,
       expiresIn: 3600,
       tokenType: 'Bearer',
     }
-    return HttpResponse.json(tokenPair)
+    return HttpResponse.json({ ...tokenPair, user: userWithoutPassword }, { headers: cookieHeaders })
   }),
 
-  http.post(`${BASE_URL}/auth/refresh`, async ({ request }) => {
-    const body = (await request.json()) as { refreshToken: string }
-    if (!body.refreshToken) {
-      return HttpResponse.json({ title: 'Invalid refresh token', status: 401 }, { status: 401 })
+  http.post(`${BASE_URL}/auth/refresh`, ({ request }) => {
+    // Cookie-first: resolve user from existing access_token cookie or in-memory session.
+    // Unlike the old bearer-only mock, we do NOT fall back to a hardcoded user —
+    // an unauthenticated refresh must return 401 so the client redirect-to-login
+    // guard is exercised correctly.
+    const user = resolveUserFromRequest(request)
+    if (!user) {
+      return HttpResponse.json({ title: 'Invalid or missing refresh token', status: 401 }, { status: 401 })
     }
-    const user = SEED_USERS['leader.chen']
+    const cookieHeaders = buildAuthCookieHeaders(user)
     const tokenPair: TokenPair = {
       accessToken: makeToken(user),
       refreshToken: `refresh_${user.id}_${Date.now()}`,
       expiresIn: 3600,
       tokenType: 'Bearer',
     }
-    return HttpResponse.json(tokenPair)
+    return HttpResponse.json(tokenPair, { headers: cookieHeaders })
   }),
 
   http.post(`${BASE_URL}/auth/logout`, () => {
-    return new HttpResponse(null, { status: 204 })
+    currentMockUser = null
+    return new HttpResponse(null, { status: 204, headers: buildClearCookieHeaders() })
   }),
 
-  // Me
+  // Me — accepts cookie auth, in-memory session, or Bearer header (backward-compat)
   http.get(`${BASE_URL}/me`, ({ request }) => {
-    const auth = request.headers.get('Authorization')
-    if (!auth) return HttpResponse.json({ title: 'Unauthorized', status: 401 }, { status: 401 })
-    try {
-      const token = auth.replace('Bearer ', '')
-      const parts = token.split('.')
-      if (parts.length < 2) throw new Error('Bad token')
-      const payload = JSON.parse(atob(parts[1])) as { accountName: string }
-      const user = SEED_USERS[payload.accountName]
-      if (!user) return HttpResponse.json({ title: 'Not found', status: 404 }, { status: 404 })
-      const { password: _pass, ...userWithoutPassword } = user
-      return HttpResponse.json(userWithoutPassword)
-    } catch {
-      return HttpResponse.json({ title: 'Unauthorized', status: 401 }, { status: 401 })
-    }
+    const user = resolveUserFromRequest(request)
+    if (!user) return HttpResponse.json({ title: 'Unauthorized', status: 401 }, { status: 401 })
+    const { password: _pass, ...userWithoutPassword } = user
+    return HttpResponse.json(userWithoutPassword)
   }),
 
   // Users

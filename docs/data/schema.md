@@ -1,9 +1,15 @@
 # 資料模型設計文件
 
-**版本**: 1.0.0
-**對應 Spec**: v1.3.0
+**版本**: 1.1.0
+**對應 Spec**: v1.4.0
 **負責 agent**: mongodb-modeler
-**最後更新**: 2026-05-04
+**最後更新**: 2026-05-08
+
+### v1.1.0 變更摘要(2026-05-08,M5.2)
+
+- `users` collection 新增 `failedLoginCount`、`lockedUntil` 兩欄(M5.3 S-016 鎖定機制所需);`schemaVersion` 新寫入預設 2。
+- 新增 `outbox_dead_letters` collection(M5.4 C-015 OutboxPoller dead-letter 機制所需)。
+- 詳見 `docs/data/migrations/0001-user-lockout-fields.md`、`docs/data/migrations/0002-outbox-dead-letter.md`。
 
 ---
 
@@ -30,8 +36,9 @@
 | `task_templates` | TaskTemplate(GLOBAL + ORG 同 collection) |
 | `attachments` | Attachment metadata |
 | `webhooks` | Webhook 訂閱 |
-| `webhook_dead_letters` | Webhook 送達失敗死信 |
+| `webhook_dead_letters` | Webhook HTTP 投遞失敗死信(webhook-specific) |
 | `domain_event_outbox` | Outbox 模式 domain events |
+| `outbox_dead_letters` | Outbox event 超限死信(通用,retryCount > 10) |
 | `audit_logs` | 系統級稽核日誌 |
 
 ### 0.2 ID 策略
@@ -107,6 +114,8 @@ erDiagram
         ObjectId[] groupIds FK "衍生 cache"
         ObjectId[] primaryOrgPath FK "衍生 cache;leaf root→leaf"
         bool     active
+        int      failedLoginCount "v1.4;預設 0"
+        date     lockedUntil "v1.4;null=未鎖定"
     }
 
     USER_CREDENTIAL {
@@ -232,6 +241,18 @@ erDiagram
         string   action
     }
 
+    OUTBOX_DEAD_LETTER {
+        ObjectId _id PK
+        ObjectId rootOrgId "可 null(GLOBAL event)"
+        ObjectId originalOutboxId FK "來源 domain_event_outbox._id"
+        string   eventType
+        object   payload "完整 DomainEvent JSON"
+        int      retryCount "必定 > 10"
+        string   lastError "可 null"
+        date     createdAt "EventOutbox 初次建立時間"
+        date     failedAt "進入 dead-letter 的時間"
+    }
+
     %% ── Organization 樹與管理權威 ────────────────────────
     ORGANIZATION ||--o{ ORGANIZATION  : "parentId 自參考(樹)"
     ORGANIZATION ||--o{ USER          : "managerId / leaderIds"
@@ -280,6 +301,9 @@ erDiagram
 
     %% ── Audit / Outbox(polymorphic 不畫線)──────────
     USER ||--o{ AUDIT_LOG : "actorId"
+
+    %% ── Outbox dead-letter ─────────────────────────
+    DOMAIN_EVENT_OUTBOX ||--o| OUTBOX_DEAD_LETTER : "originalOutboxId(搬移後)"
 ```
 
 #### 圖中未繪出的特殊關係
@@ -469,7 +493,9 @@ User 是 HR 系統的本地投影,profile 欄位(`displayName`、`email`、`empl
   ],
   "hrSyncedAt": ISODate("2026-05-01T02:00:00Z"),
   "active": true,
-  "schemaVersion": 1,
+  "failedLoginCount": 0,
+  "lockedUntil": null,
+  "schemaVersion": 2,
   "createdAt": ISODate("2026-01-10T00:00:00Z"),
   "deletedAt": null
 }
@@ -491,7 +517,9 @@ User 是 HR 系統的本地投影,profile 欄位(`displayName`、`email`、`empl
 | `primaryOrgPath` | ObjectId[] | Y | `[...]` | 衍生 cache;所屬 leaf 的 root→leaf path |
 | `hrSyncedAt` | Date? | N | `ISODate(...)` | 最近 HR 同步時間 |
 | `active` | Boolean | Y | `true` | HR 離職時 false |
-| `schemaVersion` | Int | Y | `1` | |
+| `failedLoginCount` | Int | N | `0` | v1.4 新增;連續登入失敗次數;預設 0;登入成功時 AuthService 重設為 0 |
+| `lockedUntil` | Date? | N | `null` | v1.4 新增;帳號鎖定到期時間;null = 未鎖定;超過閾值次數後由 AuthService 設定 |
+| `schemaVersion` | Int | Y | `2` | 新寫入預設 2;既存 v1 document 可正常反序列化 |
 | `createdAt` | Date | Y | | UTC |
 | `deletedAt` | Date? | Y | `null` | |
 
@@ -1386,7 +1414,66 @@ Outbox 模式(ADR-0009):aggregate 寫入與 outbox entry 寫入同一事務,確�
 
 ---
 
-## 16. Schema 版本演進說明
+## 16. outbox_dead_letters
+
+### 設計理由
+
+**為何新建獨立 collection,而非擴充 `webhook_dead_letters`(選項 X vs Y)**:
+
+`webhook_dead_letters` 屬 HTTP 投遞層語義,其欄位(`webhookId`、`targetUrl`、`attemptCount`、`lastAttemptAt`)均與 HTTP delivery 緊密相關,對 NATS 事件發布失敗毫無意義。
+
+`outbox_dead_letters` 屬 outbox transport 層語義,記錄「哪一筆 domain event 因超出重試上限而無法送達」。兩個 collection 邊界清晰,並存不造成混淆。
+
+選項 Y(generalize 既有 `WebhookDeadLetter`)的代價:需搬移既有 webhook_dead_letters 資料、欄位 mapping 有損失風險,且收益有限(只是避免兩個 collection 並存)。**選擇選項 X**。
+
+**無 TTL index**:dead-letter 屬調查證據,不應自動過期;由 ops team 手動清理已確認處理的記錄。
+
+### Document 範例
+
+```json
+{
+  "_id": ObjectId("507f1f77bcf86cd799439700"),
+  "rootOrgId": ObjectId("507f1f77bcf86cd799439011"),
+  "originalOutboxId": ObjectId("507f1f77bcf86cd799439500"),
+  "eventType": "factory-ops.task.assigned",
+  "payload": {
+    "eventId": "01HW3K9XMQP...",
+    "eventType": "task.assigned",
+    "occurredAt": "2026-05-08T10:00:00+08:00",
+    "rootOrgId": "507f1f77bcf86cd799439011",
+    "aggregateType": "Task",
+    "aggregateId": "507f1f77bcf86cd799439200",
+    "actorId": "507f1f77bcf86cd799439060",
+    "payload": { "assignees": ["507f1f77bcf86cd799439040"] }
+  },
+  "retryCount": 11,
+  "lastError": "Connection refused: nats://nats:4222",
+  "createdAt": ISODate("2026-05-08T08:30:00Z"),
+  "failedAt": ISODate("2026-05-08T10:00:00Z"),
+  "schemaVersion": 1
+}
+```
+
+### 欄位表
+
+| 欄位 | BSON 型別 | Required | 備註 |
+|---|---|---|---|
+| `_id` | ObjectId | Y | |
+| `rootOrgId` | ObjectId? | N | GLOBAL event 可 null |
+| `originalOutboxId` | ObjectId? | N | 來源 `domain_event_outbox._id` |
+| `eventType` | String | Y | `factory-ops.xxx.yyy` |
+| `payload` | Object | Y | 完整 DomainEvent JSON |
+| `retryCount` | Int | Y | 進入 dead-letter 時的值(必定 > 10) |
+| `lastError` | String? | N | 最後失敗原因;可 null |
+| `createdAt` | Date | Y | EventOutbox 初次建立時間 |
+| `failedAt` | Date | Y | 進入 dead-letter 的時間 |
+| `schemaVersion` | Int | Y | `1` |
+
+注意:此 collection 無 `deletedAt`(dead-letter 記錄不軟刪除;ops 確認後可直接 hard delete 或保留)。無 `updatedAt`(記錄建立後不修改)。
+
+---
+
+## 17. Schema 版本演進說明
 
 `schemaVersion: 1` 為初版。若日後需要遷移:
 

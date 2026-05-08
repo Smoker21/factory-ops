@@ -18,7 +18,19 @@ class UserDocument : PanacheMongoEntity() {
     var primaryOrgPath: List<ObjectId> = emptyList()
     var hrSyncedAt: Instant? = null
     var active: Boolean = true
-    var schemaVersion: Int = 1
+    /**
+     * Consecutive failed login counter (M5.2 Block A / serves M5.3 S-016).
+     * Reset to 0 on successful login; incremented on failed login.
+     * Existing documents missing this field deserialize to 0 (backward compatible).
+     */
+    var failedLoginCount: Int = 0
+    /**
+     * Account lockout expiry timestamp (M5.2 Block A / serves M5.3 S-016).
+     * null = not locked; non-null = locked until this instant.
+     * Existing documents missing this field deserialize to null (backward compatible).
+     */
+    var lockedUntil: Instant? = null
+    var schemaVersion: Int = 2
     var createdAt: Instant = Instant.now()
     var deletedAt: Instant? = null
 }

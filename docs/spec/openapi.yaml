@@ -2,20 +2,26 @@ openapi: 3.1.0
 info:
   title: Factory Ops API
   description: |
-    工廠值班工作管理系統 REST API(v1.3)。
+    工廠值班工作管理系統 REST API(v1.5)。
     - API-first,Web 與未來 Native App 共用同一組 API。
-    - 認證採 JWT Bearer Token(access + refresh)。JWT claims 帶 `userId`、`accountName`、`rootOrgId`、`orgPath[]`、`roles[]`、`groupIds[]`、`orgManagerScopes[]`(衍生自 Organization.managerId 反查)。
+    - **認證(v1.5,M5.1.5 補件)**:雙模兼容,過渡期(見 ADR-0015 與 requirements.md §FR-1.5 ~ §FR-1.8):
+      - **Cookie 模式**(目標):`access_token`(httpOnly + Secure + SameSite=Strict;Path=`/v1`;15m)、`refresh_token`(httpOnly + Secure + SameSite=Strict;Path=`/v1/auth`;7d);CSRF 採 double-submit cookie pattern(`XSRF-TOKEN` cookie 為 non-httpOnly + Secure + SameSite=Strict;Path=`/v1`;15m)
+      - **Bearer 模式**(過渡相容):`Authorization: Bearer <accessToken>` header,M5.5 frontend 切換完成後 M6 移除
+      - **Resolver 順序**:cookie `access_token` 優先,fallback Bearer header;同時帶不同 token → 以 cookie 為準
+      - **CSRF 強制**:**所有 `POST` / `PATCH` / `PUT` / `DELETE` 端點**(除 `/v1/auth/login` 與 `/v1/health`)必須帶 `X-XSRF-TOKEN` request header,值需與 `XSRF-TOKEN` cookie 完全相等,否則 403 + RFC 7807 `CSRF_TOKEN_MISMATCH`。Header 集中定義於 `components.parameters.CsrfHeader` 並在每個 mutating 端點 `$ref` 引用。OpenAPI 無法表達「優先序」,以本段文字補充。
+      - **Dev 環境**(non-prod):SameSite=Lax 以解決 localhost 跨 port(`:5173` ↔ `:8080`);prod 一律 Strict
+    - JWT claims 帶 `userId`、`accountName`、`rootOrgId`、`orgPath[]`、`roles[]`、`groupIds[]`、`orgManagerScopes[]`(衍生自 Organization.managerId 反查)。
     - **多租戶隔離**:所有資源(除 `Organization` 自身)歸屬於某個 `rootOrgId`,server 強制 scope。跨 root org 操作僅 `ADMIN` 系統角色可進行。
-    - **時間欄位**:wire format 使用 ISO 8601 + offset(例 `2026-05-04T08:30:00+08:00`,Q-17 拍板);儲存層為 UTC `Instant`。
+    - **時間欄位**:wire format 使用 ISO 8601 + offset(例 `2026-05-04T08:30:00+08:00`,Q-17 拍板);儲存層為 UTC `Instant`(**Q-24 v1.4 拍板:不保留發起端原始 offset**)。
     - 列表端點預設使用 cursor-based pagination,支援欄位投影與增量同步。
-    - **Organization 為 polymorphic 樹**(FAB → DIVISION → DEPARTMENT → SECTION),只有 leaf type 可以承載 Group / Project / Task(見 ADR-0004)。每節點有 **單一 `managerId`**(對應 ORG_MANAGER)+ **多位 `leaderIds[]`**(業務負責人列表)— 見 ADR-0010。
-    - **Group 為平面結構**(屬唯一 leaf Organization),polymorphic by `type`(DEFAULT / LINE / TEAM / SHIFT…);Group 加 `settings.qa` 用於設定 QA 雙簽機制(見 ADR-0011)。
+    - **Organization 為 polymorphic 樹**(FAB → DIVISION → DEPARTMENT → SECTION),只有 leaf type 可以承載 Group / Project / Task(見 ADR-0004)。每節點有 **單一 `managerId`**(對應 ORG_MANAGER)+ **多位 `leaderIds[]`**(業務負責人列表)— 見 ADR-0010。Manager 休假代理透過 `POST /orgs/{id}/transfer-manager` 暫代,**無 deputy 欄位**(Q-19 v1.4 拍板,代理人選由 HR 端決定)。
+    - **Group 為平面結構**(屬唯一 leaf Organization),polymorphic by `type`(DEFAULT / LINE / TEAM / SHIFT…);Group 加 `settings.qa` 用於設定 QA 雙簽機制(見 ADR-0011)。Group settings 不另做專屬 versioning,沿用 `Group.history[]`(Q-22 v1.4 拍板)。
     - **Template 機制**:支援 GLOBAL(ADMIN 維護)與 ORG(各 Org 維護)兩種 scope;可 fork from GLOBAL,可直接實例化(見 ADR-0006)。
-    - **跨層派工(v1.3 改寫)**:任一 Organization 節點的 manager 可直接派 ActionRequest 到其子孫中的 leaf Org(`targetOrgId` 必為 leaf);**v1.3 移除多層 relay 流程**(見 ADR-0008 v1.3)。
-    - **Task QA 雙簽**:Task 建立時從所屬 Project.groupIds 對應 Group settings.qa snapshot policy;之後 Group settings 變更不影響該 Task;Review action 走 `POST /tasks/{taskId}/review`(見 ADR-0011)。
-    - **HR 整合**:User 為 HR User 的本地投影,以 `accountName` 對 HR Mock REST 查詢(見 ADR-0007 v1.3 Amendment)。
-    - **事件分發**:NATS + Webhook 雙通道(見 ADR-0009)。
-  version: 1.3.0
+    - **跨層派工(v1.3 改寫,Q-18 v1.4 確認)**:**任一**具備 manager 身份的上級 Organization 節點(不限 root)可直接派 ActionRequest 到其子孫中的 leaf Org(`targetOrgId` 必為 leaf);授權判定為 server 沿 ancestry path 驗證 actor manager scope。**v1.3 移除多層 relay 流程**(見 ADR-0008 v1.3)。Leaf 端 reject 僅 emit `factory-ops.action-request.rejected` event,不主動推 in-app push(Q-20 v1.4 拍板)。
+    - **Task QA 雙簽**:Task 建立時從所屬 Project.groupIds 對應 Group settings.qa snapshot policy;之後 Group settings 變更不影響該 Task;Review action 走 `POST /tasks/{taskId}/review`(見 ADR-0011 含 v1.4 Amendment)。**Q-23 v1.4 拍板:`requiredReviewerRoles` 為 OR 白名單**(列示中的角色才能簽,不要求每角色到齊;`dualSignRequired = true` 要求 `qaReviews.size >= 2`,角色組合任意;同人可多角色簽)。Review reject 清空 `qaReviews[]` 並回 IN_PROGRESS(Q-21 v1.4 拍板)。
+    - **HR 整合**:User 為 HR User 的本地投影,以 `accountName` 對 HR Mock REST 查詢(見 ADR-0007 v1.3 Amendment + v1.4 Amendment 補充 deputy 由 HR 端負責)。
+    - **事件分發**:NATS + Webhook 雙通道(見 ADR-0009 含 v1.4 Amendment)。
+  version: 1.5.0
   contact:
     name: Factory Ops Team
 servers:
@@ -61,6 +67,8 @@ tags:
     description: 健康檢查
 
 security:
+  # v1.5 雙模:OpenAPI 列舉多項為 OR(任一通過即可);實作上 cookie 優先,fallback bearer。詳見 ADR-0015 / §FR-1.6。
+  - cookieAuth: []
   - bearerAuth: []
 
 paths:
@@ -85,6 +93,20 @@ paths:
     post:
       tags: [Auth]
       summary: 以 accountName + 密碼登入
+      description: |
+        認證使用者。套用 per-IP 與 per-account 速率限制(S-015)。
+        連續失敗 5 次後帳號暫時鎖定 15 分鐘(S-016)。
+        帳號鎖定時回傳 401 + errorCode=ACCOUNT_LOCKED + retryAfterSeconds。
+
+        **v1.5 cookie 設定(§FR-1.5 ~ §FR-1.8 / ADR-0015)**:
+        成功響應同時設三個 `Set-Cookie`:
+        - `access_token`(HttpOnly + Secure + SameSite=Strict;Path=`/v1`;15m)
+        - `refresh_token`(HttpOnly + Secure + SameSite=Strict;Path=`/v1/auth`;7d)
+        - `XSRF-TOKEN`(non-HttpOnly + Secure + SameSite=Strict;Path=`/v1`;15m;client 讀此 cookie 並於 mutating request 帶 `X-XSRF-TOKEN` header)
+
+        **Dev 環境**:`SameSite=Lax` 替代 Strict 以支援 localhost 跨 port。
+        **Body 仍回 `TokenPair`**:過渡期 Bearer header 模式並存,M6 全切 cookie 後再移除 body 欄位。
+        **本端點 CSRF 豁免**:client 尚未持有 cookie,無從 double-submit。
       security: []
       requestBody:
         required: true
@@ -94,60 +116,144 @@ paths:
               $ref: '#/components/schemas/LoginRequest'
       responses:
         '200':
-          description: 登入成功
+          description: |
+            登入成功。回傳 access + refresh token(向前相容 Bearer 模式),同時設定 cookie(v1.5 cookie 模式)。
+          headers:
+            Set-Cookie:
+              description: |
+                **多筆 Set-Cookie**(HTTP 規範允許重複此 header):
+                1. `access_token=<jwt>; Path=/v1; HttpOnly; Secure; SameSite=Strict; Max-Age=900`
+                2. `refresh_token=<jwt>; Path=/v1/auth; HttpOnly; Secure; SameSite=Strict; Max-Age=604800`
+                3. `XSRF-TOKEN=<nonce>; Path=/v1; Secure; SameSite=Strict; Max-Age=900`
+                Dev 環境 SameSite=Lax。
+              schema: { type: string }
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/TokenPair'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          description: 憑證錯誤或帳號鎖定(ACCOUNT_LOCKED)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '429':
+          description: 速率限制觸發 — 見 Retry-After header
+          headers:
+            Retry-After:
+              description: 距下次可重試的秒數
+              schema: { type: integer }
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 
   /auth/refresh:
     post:
       tags: [Auth]
       summary: 以 refresh token 換發新的 access token
+      description: |
+        **v1.5 行為(§FR-1.5 / §FR-1.8 / ADR-0015)**:
+        - **優先從 `refresh_token` cookie 讀取**;若 cookie 不存在則 fallback request body `{ refreshToken }`(M5.5 frontend 切完後 M6 移除 body 路徑)
+        - 成功響應 rotate 三個 cookie(舊 refresh jti 立即黑名單,新 jti 取代;XSRF-TOKEN 同步重發)
+        - **CSRF 強制**:本端點屬 mutating,必須帶 `X-XSRF-TOKEN`(login 後 client 已持有 cookie,可正常 double-submit)
       security: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
-        required: true
+        required: false
+        description: |
+          v1.5:**選填**(向前兼容)。若 `refresh_token` cookie 已帶,server 優先使用 cookie;cookie 缺漏時才使用 body。
         content:
           application/json:
             schema:
               type: object
-              required: [refreshToken]
               properties:
-                refreshToken: { type: string }
+                refreshToken: { type: string, description: v1.5 起選填,優先讀 cookie }
       responses:
         '200':
-          description: 新 token pair
+          description: |
+            新 token pair。同時 rotate 三個 cookie(屬性同 `/auth/login` 200)。
+          headers:
+            Set-Cookie:
+              description: |
+                **多筆 Set-Cookie**(rotate):
+                1. `access_token=<jwt>; Path=/v1; HttpOnly; Secure; SameSite=Strict; Max-Age=900`
+                2. `refresh_token=<jwt>; Path=/v1/auth; HttpOnly; Secure; SameSite=Strict; Max-Age=604800`
+                3. `XSRF-TOKEN=<nonce>; Path=/v1; Secure; SameSite=Strict; Max-Age=900`
+                Dev 環境 SameSite=Lax。
+              schema: { type: string }
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/TokenPair'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfMismatch'
 
   /auth/logout:
     post:
       tags: [Auth]
       summary: 登出(撤銷 refresh token)
+      description: |
+        將 refresh token jti 加入黑名單。套用 per-IP 速率限制(S-015)。
+
+        **v1.5 行為(§FR-1.8 / ADR-0015)**:
+        - 優先從 `refresh_token` cookie 讀取;若 cookie 不存在則 fallback request body
+        - 成功響應將三個 cookie 全部以 `Max-Age=0` 清除(`access_token`、`refresh_token`、`XSRF-TOKEN`)
+        - **CSRF 強制**:本端點屬 mutating,必須帶 `X-XSRF-TOKEN`
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
-        required: true
+        required: false
+        description: |
+          v1.5:**選填**(向前兼容)。
         content:
           application/json:
             schema:
               type: object
-              required: [refreshToken]
               properties:
-                refreshToken: { type: string }
+                refreshToken: { type: string, description: v1.5 起選填,優先讀 cookie }
       responses:
-        '204': { description: No Content }
+        '204':
+          description: |
+            No Content。三個 cookie 已清除。
+          headers:
+            Set-Cookie:
+              description: |
+                **多筆 Set-Cookie**(清除):
+                1. `access_token=; Path=/v1; HttpOnly; Secure; SameSite=Strict; Max-Age=0`
+                2. `refresh_token=; Path=/v1/auth; HttpOnly; Secure; SameSite=Strict; Max-Age=0`
+                3. `XSRF-TOKEN=; Path=/v1; Secure; SameSite=Strict; Max-Age=0`
+              schema: { type: string }
+        '403':
+          $ref: '#/components/responses/CsrfMismatch'
+        '429':
+          description: 速率限制觸發 — 見 Retry-After header
+          headers:
+            Retry-After:
+              description: 距下次可重試的秒數
+              schema: { type: integer }
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 
   /auth/password:
     put:
       tags: [Auth]
       summary: 變更自己的密碼
+      description: |
+        驗證目前密碼並強制新密碼強度(>= 12 字元，>= 3 種字元類別)。
+        套用 per-IP 與 per-account 速率限制(S-011, S-015)。
+
+        **v1.5 行為(§FR-1.8 / ADR-0015)**:不影響三個 auth cookie(避免改密碼後立即登出造成 UX 中斷);若需「全裝置登出」,M6 候選改 user-scoped jti 黑名單機制。
+        **CSRF 強制**:本端點屬 mutating,必須帶 `X-XSRF-TOKEN`
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -162,6 +268,24 @@ paths:
         '204': { description: No Content }
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfMismatch'
+        '422':
+          description: 新密碼不符強度要求
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 速率限制觸發 — 見 Retry-After header
+          headers:
+            Retry-After:
+              description: 距下次可重試的秒數
+              schema: { type: integer }
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 
   # ===================== Me =====================
   /me:
@@ -192,6 +316,8 @@ paths:
     put:
       tags: [Me]
       summary: 更新通知偏好(預留)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -251,6 +377,8 @@ paths:
       description: |
         - 建立 root(無 parentId):僅 `ADMIN` 可。
         - 建立子節點(有 parentId):`ORG_ADMIN`(同 root)或 `ADMIN`。
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -285,6 +413,8 @@ paths:
       tags: [Organizations]
       summary: 更新 Organization 節點(name / parentId / leaderId / settings(僅 root))
       description: 變更 parentId 會即時驗證 cycle 與深度上限,失敗回 409
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -303,10 +433,18 @@ paths:
       summary: 軟刪除 Organization 節點
       description: |
         - 非 leaf 節點:必須先處理(移除/軟刪)所有子孫,否則 409
+        - C-014:若該節點仍有 active Projects 或 Groups → 409 `has_active_resources`
         - root:cascade soft-delete 整棵樹下所有資源
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '204': { description: No Content }
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
+          description: |
+            Organization has active children, active projects, or groups.
+            Error codes: `has_children`, `has_active_resources`.
           $ref: '#/components/responses/Conflict'
 
   /orgs/{orgId}/transfer-manager:
@@ -320,6 +458,8 @@ paths:
         - 傳 `newManagerId: null` 表示清空(該節點暫無 manager)。
         - 變更會寫入 `Organization.history[]` 並 emit `factory-ops.org.manager-transferred`。
         - 對應的 `User.orgManagerScopes[]` 衍生欄位由 reactor 同步維護。
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -367,6 +507,8 @@ paths:
       description: |
         - 將 `userId` 加入該節點的 `leaderIds[]`;若已存在則 409。
         - user 必須與 Organization 同 `rootOrgId` 且 `active = true`,否則 422。
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -398,6 +540,8 @@ paths:
       description: |
         - 將指定 `userId` 自 `leaderIds[]` 移除。
         - 若為最後一位 leader,允許移除(`leaderIds.length == 0`),但之後新派工到此 leaf 會 409 `target_org_no_leader`。
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '204': { description: No Content }
         '404':
@@ -418,6 +562,8 @@ paths:
           - `length == 1` → 自動 `ownerId = leaderIds[0]`(忽略 body.ownerId 或要求等於該值)
           - `length >= 2` → 必須 body.ownerId ∈ leaderIds;未提供則 422 `owner_must_be_specified`,不在集合中則 422 `owner_not_in_leaders`
         - **v1.3 移除「relay 到下一級」流程**;不再有 `POST /action-requests/{id}/relay`。
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -479,6 +625,8 @@ paths:
     post:
       tags: [Groups]
       summary: 建立 Group(必須屬於 leaf Organization)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -514,6 +662,8 @@ paths:
       tags: [Groups]
       summary: 更新 Group(name / type / attributes)
       description: Group 為平面;不可變更 organizationId(如需轉移請新建新 Group + 移轉成員)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -531,6 +681,8 @@ paths:
       tags: [Groups]
       summary: 軟刪除 Group
       description: 必須先確保無 active 成員與進行中的 Project / Task,否則 409
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '204': { description: No Content }
         '409':
@@ -561,6 +713,8 @@ paths:
     post:
       tags: [GroupMemberships]
       summary: 加入成員
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -592,6 +746,8 @@ paths:
       tags: [GroupMemberships]
       summary: 移除成員(等同設定 `leftAt`)
       description: 若該 user 是 Group leader,必須先 transferLeader,否則 409
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '204': { description: No Content }
         '409':
@@ -604,6 +760,8 @@ paths:
     post:
       tags: [GroupMemberships]
       summary: 移轉 Group leader
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -663,6 +821,8 @@ paths:
         - `qa.dualSignRequired = true` 但 `requiredReviewerRoles[]` 為空 → 422
         - `requiredReviewerRoles[]` 只能含第一線角色(OPERATOR / SHIFT_LEAD / ENGINEER / QA / GROUP_ADMIN / GROUP_MANAGER),否則 422
         - 變更會寫入 `Group.history[]` 並 emit `factory-ops.group.settings-qa-updated`。
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -704,6 +864,8 @@ paths:
     post:
       tags: [SystemTemplates]
       summary: 建立 GLOBAL ProjectTemplate(ADMIN 限定)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -739,6 +901,8 @@ paths:
     patch:
       tags: [SystemTemplates]
       summary: 更新 GLOBAL ProjectTemplate(ADMIN;產生新 version)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -753,6 +917,8 @@ paths:
     delete:
       tags: [SystemTemplates]
       summary: Deactivate GLOBAL ProjectTemplate(ADMIN)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '204': { description: No Content }
 
@@ -781,6 +947,8 @@ paths:
     post:
       tags: [SystemTemplates]
       summary: 建立 GLOBAL TaskTemplate(ADMIN)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -812,6 +980,8 @@ paths:
     patch:
       tags: [SystemTemplates]
       summary: 更新 GLOBAL TaskTemplate(ADMIN;產生新 version)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -826,6 +996,8 @@ paths:
     delete:
       tags: [SystemTemplates]
       summary: Deactivate GLOBAL TaskTemplate(ADMIN)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '204': { description: No Content }
 
@@ -843,6 +1015,8 @@ paths:
       description: |
         將指定 GLOBAL ProjectTemplate 深拷貝為當前 root org 的 ORG ProjectTemplate(version=1)。
         Fork 後完全脫鉤,GLOBAL 後續演進不影響此 ORG 副本。
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: false
         content:
@@ -873,6 +1047,8 @@ paths:
     post:
       tags: [TaskTemplates]
       summary: 從 GLOBAL TaskTemplate Fork 為 ORG-scoped
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: false
         content:
@@ -921,6 +1097,8 @@ paths:
     post:
       tags: [ProjectTemplates]
       summary: 建立 ProjectTemplate(version=1)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -958,6 +1136,8 @@ paths:
     patch:
       tags: [ProjectTemplates]
       summary: 更新 ProjectTemplate(產生新 version)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -972,6 +1152,8 @@ paths:
     delete:
       tags: [ProjectTemplates]
       summary: Deactivate ProjectTemplate(軟性,設 active=false)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '204': { description: No Content }
 
@@ -1006,6 +1188,8 @@ paths:
     post:
       tags: [TaskTemplates]
       summary: 建立 TaskTemplate(version=1)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1042,6 +1226,8 @@ paths:
     patch:
       tags: [TaskTemplates]
       summary: 更新 TaskTemplate(產生新 version)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1056,6 +1242,8 @@ paths:
     delete:
       tags: [TaskTemplates]
       summary: Deactivate TaskTemplate(設 active=false)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '204': { description: No Content }
 
@@ -1102,6 +1290,8 @@ paths:
       summary: 建立使用者(以 accountName 從 HR 同步建立;ORG_ADMIN / ADMIN)
       description: |
         Server 會以 `accountName` 呼叫 HR 服務驗證該員工存在且在職;HR 無此 accountName 則 422,HR 不可達則 503。
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1110,10 +1300,19 @@ paths:
               $ref: '#/components/schemas/CreateUserRequest'
       responses:
         '201':
-          description: 已建立(本地投影)
+          description: |
+            已建立(本地投影)。回應包含 temporaryPassword 供一次性顯示(S-011)。
+            此密碼不會再次出現,請立即傳達給使用者。
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/User' }
+              schema:
+                type: object
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+                  temporaryPassword:
+                    type: string
+                    description: 一次性暫時密碼(伺服器端 SecureRandom 產生,不儲存明文)
+                required: [user, temporaryPassword]
         '409':
           $ref: '#/components/responses/Conflict'
         '422':
@@ -1141,6 +1340,8 @@ paths:
     patch:
       tags: [Users]
       summary: 更新使用者(ADMIN)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1156,6 +1357,8 @@ paths:
     delete:
       tags: [Users]
       summary: 軟刪除使用者(ADMIN)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '204': { description: No Content }
 
@@ -1168,6 +1371,8 @@ paths:
       description: |
         從 HR 服務拉取最新 profile,overwrite 本地 snapshot 欄位 + 更新 `hrSyncedAt`。
         若 HR 標記離職,連動 deactivate user 並移除所有 active GroupMembership。
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '200':
           description: 已同步
@@ -1237,6 +1442,8 @@ paths:
     post:
       tags: [Projects]
       summary: 建立 Project
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1274,6 +1481,8 @@ paths:
     patch:
       tags: [Projects]
       summary: 更新 Project 基本欄位
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1288,6 +1497,8 @@ paths:
     delete:
       tags: [Projects]
       summary: 軟刪除 Project
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '204': { description: No Content }
 
@@ -1297,6 +1508,8 @@ paths:
     post:
       tags: [Projects]
       summary: 變更 Project 狀態
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1322,6 +1535,8 @@ paths:
     post:
       tags: [Projects]
       summary: 變更 Project 負責人
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1356,6 +1571,8 @@ paths:
     post:
       tags: [Memberships]
       summary: 加入成員
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1380,6 +1597,8 @@ paths:
     delete:
       tags: [Memberships]
       summary: 移除成員
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '204': { description: No Content }
 
@@ -1459,6 +1678,8 @@ paths:
     post:
       tags: [Tasks]
       summary: 建立 Task
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1500,6 +1721,8 @@ paths:
     patch:
       tags: [Tasks]
       summary: 更新 Task 內容(不含指派 / 狀態)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1514,6 +1737,8 @@ paths:
     delete:
       tags: [Tasks]
       summary: 軟刪除 Task
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '204': { description: No Content }
 
@@ -1530,6 +1755,8 @@ paths:
           server 會檢查 actor 是否具 GROUP_MANAGER 角色 + body 必須附 `bypassReason`(以 `reason` 欄位提供;
           force-complete 場景 reason 為**必填**;否則 422)。
           此情境下 `factory-ops.task.completed` 事件 payload 帶 `bypassed: true`。
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1560,6 +1787,8 @@ paths:
     post:
       tags: [Tasks]
       summary: 加入指派人(批次)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1587,6 +1816,8 @@ paths:
       tags: [Tasks]
       summary: 移除指派人
       description: 不能移除目前的 ownerId(會回 409)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '200':
           description: 已更新
@@ -1602,6 +1833,8 @@ paths:
     post:
       tags: [Tasks]
       summary: 移轉 Task 負責人
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1627,14 +1860,15 @@ paths:
       - $ref: '#/components/parameters/TaskIdParam'
     post:
       tags: [Tasks]
-      summary: QA 雙簽 Review action(IN_REVIEW → DONE 流程;v1.3 新增)
+      summary: QA 雙簽 Review action(IN_REVIEW → DONE 流程;v1.3 新增,**v1.4 改採 Q-23 OR 白名單語意**)
       description: |
-        - 必要前置:`task.status == IN_REVIEW`,且 `task.qaReviewPolicy.dualSignRequired == true`(否則 409)。
-        - actor 必須具備 body.role 角色,且 body.role ∈ `task.qaReviewPolicy.requiredReviewerRoles`(否則 403 / 422)。
-        - 同 (taskId, reviewerId, role) 不可重複(否則 409 `review_already_submitted`)。
-        - 同一 user 不可同時以多個角色滿足同一 Task 的 review(INV-36)。
-        - **APPROVED**:append `qaReviews[]` 一筆;若蒐集完 policy 要求的所有 role 則 server 自動推進 status = DONE 並 emit `factory-ops.task.completed`。
-        - **REJECTED**:append + status 回退至 IN_PROGRESS;預設清空既往 reviews(語意「重新走流程」;Q-21 待確認)。
+        - 必要前置:`task.status == IN_REVIEW`(若 `qaReviewPolicy.dualSignRequired == false` 則一筆 APPROVED 即 auto-complete)。
+        - actor 必須具備 body.role 角色,且 **body.role ∈ `task.qaReviewPolicy.requiredReviewerRoles`(白名單)**(否則 422 `role_not_required`)。
+        - 同 `(taskId, reviewerId, role)` 不可重複(否則 409 `review_already_submitted`);**同一 user 可以以不同角色多次簽核並各記一筆**(Q-23 / Q5 B v1.4 拍板;新 INV-36)。
+        - **APPROVED**:append `qaReviews[]` 一筆;**Auto-complete 條件**(Q-23 v1.4 OR 白名單,見 ADR-0011 v1.4 Amendment §2):`(qaReviewPolicy.dualSignRequired ? qaReviews.size >= 2 : qaReviews.size >= 1)` 且 所有 `qaReviews[].reviewerRole ∈ requiredReviewerRoles` 且 所有 `decision == APPROVED` → 自動推進 `status = DONE` 並 emit `factory-ops.task.completed`。
+        - **REJECTED**(Q-21 v1.4 拍板):append history + **清空 `qaReviews[]`** + status 回退至 `IN_PROGRESS` + emit `factory-ops.task.review-rejected`;`history[]` 保留稽核軌跡。
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1673,6 +1907,8 @@ paths:
     post:
       tags: [Comments]
       summary: 新增留言
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1695,6 +1931,8 @@ paths:
     patch:
       tags: [Comments]
       summary: 編輯留言(限作者本人)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1713,6 +1951,8 @@ paths:
     delete:
       tags: [Comments]
       summary: 軟刪除留言
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '204': { description: No Content }
 
@@ -1774,6 +2014,8 @@ paths:
     post:
       tags: [ActionRequests]
       summary: 提交 ActionRequest
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1804,6 +2046,8 @@ paths:
     patch:
       tags: [ActionRequests]
       summary: 更新內容
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1818,6 +2062,8 @@ paths:
     delete:
       tags: [ActionRequests]
       summary: 軟刪除
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '204': { description: No Content }
 
@@ -1830,6 +2076,8 @@ paths:
     post:
       tags: [ActionRequests]
       summary: 變更狀態
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1859,6 +2107,8 @@ paths:
     post:
       tags: [ActionRequests]
       summary: 將 ActionRequest 轉換為 Task
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1878,6 +2128,8 @@ paths:
     post:
       tags: [Attachments]
       summary: 建立附件 metadata 並取得上傳用 presigned URL
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1908,6 +2160,8 @@ paths:
     delete:
       tags: [Attachments]
       summary: 軟刪除附件
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '204': { description: No Content }
 
@@ -1920,6 +2174,8 @@ paths:
     post:
       tags: [Attachments]
       summary: 上傳完成後通知系統(觸發 checksum / 病毒掃描)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '200':
           description: 已 finalize
@@ -1943,6 +2199,8 @@ paths:
     post:
       tags: [Webhooks]
       summary: 註冊 webhook(預留)
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -1964,6 +2222,8 @@ paths:
     delete:
       tags: [Webhooks]
       summary: 移除 webhook
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '204': { description: No Content }
 
@@ -1974,8 +2234,32 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: |
+        過渡期 Bearer header 模式(M5.5 frontend 切換 cookie 後 M6 移除)。
+        Resolver 順序:cookie `access_token` 優先,本欄位 fallback。詳見 ADR-0015。
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: access_token
+      description: |
+        v1.5 新增 — JWT access token 以 httpOnly + Secure + SameSite=Strict cookie 攜帶(Path=`/v1`,15 分壽命)。
+        瀏覽器自動帶上,client 端不需手動處理。詳見 §FR-1.6 與 ADR-0015。
+        **注意**:cookieAuth 通過 ≠ 可放行 mutating request;mutating 額外要求 `X-XSRF-TOKEN` header 與 `XSRF-TOKEN` cookie 比對(double-submit),見 `parameters.CsrfHeader`。
 
   parameters:
+    CsrfHeader:
+      in: header
+      name: X-XSRF-TOKEN
+      required: true
+      schema:
+        type: string
+        minLength: 32
+      description: |
+        **CSRF double-submit token**(v1.5 新增,§FR-1.7 / ADR-0015)。
+        所有 mutating 端點(`POST` / `PATCH` / `PUT` / `DELETE`,除 `/v1/auth/login` 與 `/v1/health`)必須帶。
+        值由 client 從 `XSRF-TOKEN` cookie 讀取後填入(該 cookie 為 non-httpOnly,JS 可讀)。
+        Server 逐字比對 cookie 與 header,不相等(含任一缺漏)→ 403 + `application/problem+json`,`title=CSRF_TOKEN_MISMATCH`。
+        Cookie 在 login / refresh 成功響應由 server 設置(15 分壽命,每次重發 rotate)。
     OrgIdParam:
       in: path
       name: orgId
@@ -2056,6 +2340,14 @@ components:
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/ValidationProblem' }
+    CsrfMismatch:
+      description: |
+        CSRF 雙提交校驗失敗(v1.5,§FR-1.7 / ADR-0015)。
+        `X-XSRF-TOKEN` header 與 `XSRF-TOKEN` cookie 缺漏或不相等時返回。
+        Body `title=CSRF_TOKEN_MISMATCH`;`detail` 描述哪一邊缺漏(不洩漏 nonce 內容)。
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
 
   schemas:
     # ---------- 共通 ----------
@@ -2069,6 +2361,12 @@ components:
         detail: { type: string }
         instance: { type: string }
         traceId: { type: string }
+        retryAfterSeconds:
+          type: integer
+          description: |
+            Seconds until the next allowed retry.
+            Present on 401 ACCOUNT_LOCKED and 429 RATE_LIMIT_EXCEEDED responses.
+          nullable: true
       required: [title, status]
 
     ValidationProblem:
@@ -2359,7 +2657,10 @@ components:
       type: object
       description: |
         QA 雙簽設定。Task 建立時 snapshot 至 `task.qaReviewPolicy`,之後變更不影響該 Task。
-        AND 語意:requiredReviewerRoles 列示中的每個角色都需有人簽核才能 DONE(同 user 不可一次擔多角色)。
+        **Q-23 v1.4 OR 白名單語意**(取代 v1.3 AND 語意,見 ADR-0011 v1.4 Amendment):
+        - `requiredReviewerRoles` 是「白名單」(誰有資格簽),**不要求每個列示角色都到齊**。
+        - `dualSignRequired = true` 仍要求 `qaReviews.size >= 2` 才能 auto-complete,但角色組合任意(可同 role 兩筆,可不同 role 各一筆)。
+        - **同一 user 可以以不同角色多次簽核並各記一筆**(Q5 B 拍板,輕量派工確認非品保雙簽);僅 `(reviewerId, role)` unique 限制。
       properties:
         dualSignRequired:
           type: boolean
@@ -2367,7 +2668,7 @@ components:
         requiredReviewerRoles:
           type: array
           description: |
-            必要 reviewer 角色清單。若 dualSignRequired=true 不可為空。
+            **白名單**:誰有資格擔任 reviewer 的角色清單(Q-23 v1.4 OR 語意)。若 dualSignRequired=true 不可為空。
             僅允許第一線角色:OPERATOR / SHIFT_LEAD / ENGINEER / QA / GROUP_ADMIN / GROUP_MANAGER
           items: { $ref: '#/components/schemas/Role' }
           default: []
@@ -2475,17 +2776,13 @@ components:
       required: [accountName]
       description: |
         以 accountName 從 HR 拉取 profile 建立本地投影。
-        密碼若 SSO/HR 提供則由系統自動產生(初始密碼);否則由 ADMIN 提供初始暫時密碼。
+        S-011: 暫時密碼由伺服器端以 SecureRandom 自動產生(16 字元,排除易混淆字元);
+        呼叫者不需要也不應傳入密碼。回應中包含 temporaryPassword 供一次性顯示給操作員。
       properties:
         accountName: { type: string, maxLength: 30 }
         roles:
           type: array
           items: { $ref: '#/components/schemas/Role' }
-        initialPassword:
-          type: string
-          format: password
-          minLength: 12
-          description: 暫時密碼(若 HR/SSO 接管則可省略)
 
     UpdateUserRequest:
       type: object
@@ -2664,7 +2961,8 @@ components:
       description: |
         Task 建立時(或 ActionRequest convert 時)從所屬 Project.groupIds[].settings.qa 合併 snapshot 的政策。
         後續 Group settings 變更**不影響**本 Task(對應 INV-31)。
-        多 Group 合併規則:dualSignRequired = OR(各 group);requiredReviewerRoles = 各 group 的聯集去重。
+        **多 Group 合併規則**:`dualSignRequired = OR(各 group)`;`requiredReviewerRoles = 各 group 的聯集去重`。
+        (此 OR 是合併不同 Group 的 policy,與 Q-23 v1.4 OR 白名單語意為**兩件不同事**。Review 評估的 OR 白名單見 `QaSettings` 描述與 ADR-0011 v1.4 Amendment。)
       required: [dualSignRequired, requiredReviewerRoles, snapshotAt]
       properties:
         dualSignRequired: { type: boolean }

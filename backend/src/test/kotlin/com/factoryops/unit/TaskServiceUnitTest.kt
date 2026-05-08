@@ -13,16 +13,19 @@ import com.factoryops.interfaces.exception.NotFoundException
 import com.factoryops.interfaces.exception.StateTransitionException
 import com.factoryops.interfaces.exception.ValidationException
 import com.factoryops.persistence.document.GroupDocument
+import com.factoryops.persistence.document.GroupMembershipDocument
 import com.factoryops.persistence.document.GroupSettingsDocument
 import com.factoryops.persistence.document.QaReviewDocument
 import com.factoryops.persistence.document.QaReviewPolicyDocument
 import com.factoryops.persistence.document.QaSettingsDocument
 import com.factoryops.persistence.document.TaskDocument
+import com.factoryops.persistence.repository.GroupMembershipRepository
 import com.factoryops.persistence.repository.GroupRepository
 import com.factoryops.persistence.repository.ProjectRepository
 import com.factoryops.persistence.repository.TaskRepository
 import com.factoryops.persistence.repository.UserRepository
 import com.factoryops.persistence.document.ProjectDocument
+import com.factoryops.persistence.document.UserDocument
 import org.bson.types.ObjectId
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -40,6 +43,7 @@ class TaskServiceUnitTest {
     private lateinit var taskRepository: TaskRepository
     private lateinit var projectRepository: ProjectRepository
     private lateinit var groupRepository: GroupRepository
+    private lateinit var groupMembershipRepository: GroupMembershipRepository
     private lateinit var userRepository: UserRepository
     private lateinit var eventPublisher: EventPublisherService
     private lateinit var taskService: TaskService
@@ -54,9 +58,10 @@ class TaskServiceUnitTest {
         taskRepository = mock()
         projectRepository = mock()
         groupRepository = mock()
+        groupMembershipRepository = mock()
         userRepository = mock()
         eventPublisher = mock()
-        taskService = TaskService(taskRepository, projectRepository, groupRepository, userRepository, eventPublisher)
+        taskService = TaskService(taskRepository, projectRepository, groupRepository, groupMembershipRepository, userRepository, eventPublisher)
     }
 
     // ─── Helper builders ───────────────────────────────────────────────────────
@@ -167,7 +172,14 @@ class TaskServiceUnitTest {
         // Given
         val taskDoc = makeTaskDoc()
         val newUserId = ObjectId()
+        val activeUserDoc = UserDocument().also { u ->
+            u.id = newUserId; u.rootOrgId = rootId; u.accountName = "user1"
+            u.employeeNo = "E001"; u.displayName = "User 1"; u.active = true
+            u.createdAt = Instant.now()
+        }
         whenever(taskRepository.findByIdAndRootOrg(any(), eq(rootId))).thenReturn(taskDoc)
+        // C-012: mock user lookup to return active user
+        whenever(userRepository.findByIdAndNotDeleted(any(), eq(rootId))).thenReturn(activeUserDoc)
         val captured = argumentCaptor<TaskDocument>()
         doNothing().whenever(taskRepository).update(captured.capture())
         whenever(eventPublisher.publishTaskAssigned(any(), any())).then {}
@@ -394,6 +406,12 @@ class TaskServiceUnitTest {
         // Given
         val taskDoc = makeTaskDoc(status = TaskStatus.IN_PROGRESS, dualSign = true, requiredRoles = listOf("QA"))
         whenever(taskRepository.findByIdAndRootOrg(any(), eq(rootId))).thenReturn(taskDoc)
+        // C-006: reason check comes AFTER membership check, so mock membership as satisfied
+        val membershipDoc = GroupMembershipDocument().also { m ->
+            m.id = ObjectId(); m.rootOrgId = rootId; m.groupId = ObjectId()
+            m.userId = ownerId; m.joinedAt = Instant.now()
+        }
+        whenever(groupMembershipRepository.findActiveByGroupIdAndUserId(any(), any(), any())).thenReturn(membershipDoc)
 
         // When / Then
         assertThrows(ValidationException::class.java) {
@@ -408,16 +426,45 @@ class TaskServiceUnitTest {
         }
     }
 
-    // ─── QA review: submitReview APPROVE completes task when all roles approved
+    // ─── QA review: Q-23 OR auto-complete requires size >= 2 when dualSignRequired ──
 
     @Test
-    fun `should complete task when all required roles have approved`() {
-        // Given: task IN_REVIEW, requires only QA role
-        val taskDoc = makeTaskDoc(status = TaskStatus.IN_REVIEW, dualSign = true, requiredRoles = listOf("QA"))
+    fun `should complete task when 2 or more reviews approved with whitelisted roles (Q-23 OR)`() {
+        // Given: task IN_REVIEW, dualSignRequired=true, whitelist = [QA, SHIFT_LEAD]
+        // Pre-populate with one existing APPROVED review from SHIFT_LEAD
+        val existingReview = QaReviewDocument().also { r ->
+            r.reviewerId = ObjectId(); r.reviewerRole = "SHIFT_LEAD"
+            r.decision = ReviewDecision.APPROVED.name; r.at = Instant.now()
+        }
+        val taskDoc = makeTaskDoc(status = TaskStatus.IN_REVIEW, dualSign = true, requiredRoles = listOf("QA", "SHIFT_LEAD"))
+        taskDoc.qaReviews = listOf(existingReview)
         whenever(taskRepository.findByIdAndRootOrg(any(), eq(rootId))).thenReturn(taskDoc)
         val captured = argumentCaptor<TaskDocument>()
         doNothing().whenever(taskRepository).update(captured.capture())
         whenever(eventPublisher.publishTaskCompleted(any(), any())).then {}
+
+        // When: second review (QA) is submitted — now size >= 2, auto-complete triggers
+        val result = taskService.submitReview(
+            taskId = taskId.toHexString(),
+            rootOrgId = rootId.toHexString(),
+            reviewerRole = Role.QA,
+            decision = ReviewDecision.APPROVED,
+            reason = null,
+            actorId = ownerId.toHexString()
+        )
+
+        // Then: task moves to DONE (size >= 2 with all-in-whitelist roles)
+        assertEquals(TaskStatus.DONE, result.status)
+    }
+
+    @Test
+    fun `should stay IN_REVIEW after first approval when dualSignRequired is true (Q-23 OR)`() {
+        // Given: task IN_REVIEW, dualSignRequired=true, only one review submitted
+        val taskDoc = makeTaskDoc(status = TaskStatus.IN_REVIEW, dualSign = true, requiredRoles = listOf("QA"))
+        // No existing reviews — first review should not complete
+        whenever(taskRepository.findByIdAndRootOrg(any(), eq(rootId))).thenReturn(taskDoc)
+        val captured = argumentCaptor<TaskDocument>()
+        doNothing().whenever(taskRepository).update(captured.capture())
 
         // When
         val result = taskService.submitReview(
@@ -429,8 +476,8 @@ class TaskServiceUnitTest {
             actorId = ownerId.toHexString()
         )
 
-        // Then: task moves to DONE
-        assertEquals(TaskStatus.DONE, result.status)
+        // Then: task stays IN_REVIEW (need >= 2 for dualSign)
+        assertEquals(TaskStatus.IN_REVIEW, result.status)
     }
 
     @Test

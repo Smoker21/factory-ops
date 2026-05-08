@@ -9,7 +9,9 @@ import com.factoryops.interfaces.exception.ValidationException
 import com.factoryops.persistence.document.OrganizationDocument
 import com.factoryops.persistence.document.OrgSettingsDocument
 import com.factoryops.persistence.document.AuditEntryDocument
+import com.factoryops.persistence.repository.GroupRepository
 import com.factoryops.persistence.repository.OrganizationRepository
+import com.factoryops.persistence.repository.ProjectRepository
 import com.factoryops.persistence.repository.UserRepository
 import com.factoryops.persistence.document.UserDocument
 import org.bson.types.ObjectId
@@ -28,13 +30,17 @@ class OrganizationServiceUnitTest {
 
     private lateinit var orgRepository: OrganizationRepository
     private lateinit var userRepository: UserRepository
+    private lateinit var projectRepository: ProjectRepository
+    private lateinit var groupRepository: GroupRepository
     private lateinit var orgService: OrganizationService
 
     @BeforeEach
     fun setup() {
         orgRepository = mock()
         userRepository = mock()
-        orgService = OrganizationService(orgRepository, userRepository)
+        projectRepository = mock()
+        groupRepository = mock()
+        orgService = OrganizationService(orgRepository, userRepository, projectRepository, groupRepository)
     }
 
     // ─── Helper builders ───────────────────────────────────────────────────────

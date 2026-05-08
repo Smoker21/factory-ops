@@ -4,6 +4,10 @@ import com.factoryops.application.auth.JwtIssuerService
 import com.factoryops.application.auth.PasswordHasher
 import com.factoryops.application.auth.TokenPair
 import com.factoryops.application.service.AuthService
+import com.factoryops.infrastructure.security.LockoutStateWriter
+import com.factoryops.infrastructure.security.RateLimiter
+import com.factoryops.interfaces.exception.AccountLockedException
+import com.factoryops.interfaces.exception.RateLimitExceededException
 import com.factoryops.interfaces.exception.UnauthorizedException
 import com.factoryops.persistence.document.OrganizationDocument
 import com.factoryops.persistence.document.UserCredentialsDocument
@@ -38,6 +42,8 @@ class AuthServiceUnitTest {
     private lateinit var jwtIssuerService: JwtIssuerService
     private lateinit var orgRepository: OrganizationRepository
     private lateinit var revokedTokenRepository: RevokedTokenRepository
+    private lateinit var rateLimiter: RateLimiter
+    private lateinit var lockoutStateWriter: LockoutStateWriter
     private lateinit var authService: AuthService
 
     private val rootOrgId = ObjectId()
@@ -51,9 +57,16 @@ class AuthServiceUnitTest {
         jwtIssuerService = mock()
         orgRepository = mock()
         revokedTokenRepository = mock()
+        rateLimiter = mock()
+        lockoutStateWriter = mock()
+        // S-015: default to no-op — does not throw RateLimitViolation
+        doNothing().whenever(rateLimiter).checkAndRecord(any(), any(), any())
+        // S-016: default to no-op for lockout state writer
+        doNothing().whenever(lockoutStateWriter).recordFailedAttempt(any(), any(), any())
+        doNothing().whenever(lockoutStateWriter).resetLockout(any())
         authService = AuthService(
             userRepository, credentialsRepository, passwordHasher,
-            jwtIssuerService, orgRepository, revokedTokenRepository
+            jwtIssuerService, orgRepository, revokedTokenRepository, rateLimiter, lockoutStateWriter
         )
     }
 
@@ -417,6 +430,146 @@ class AuthServiceUnitTest {
                 currentPassword = "OldPass@123",
                 newPassword = "NewPass@123456"
             )
+        }
+    }
+
+    // ─── S-016: Account lockout ─────────────────────────────────────────────────
+
+    @Test
+    fun `should throw AccountLockedException when account is locked`() {
+        // Given: account is locked until 15 minutes from now
+        val orgDoc = makeRootOrgDoc()
+        val lockedUserDoc = makeUserDoc(active = true)
+        lockedUserDoc.lockedUntil = Instant.now().plusSeconds(900)
+
+        whenever(orgRepository.findRootByCode(any())).thenReturn(orgDoc)
+        whenever(userRepository.findByAccountName(any(), any())).thenReturn(lockedUserDoc)
+
+        // When / Then
+        org.junit.jupiter.api.assertThrows<AccountLockedException> {
+            authService.login("taichung-fab", "admin.system", "Admin@123")
+        }
+    }
+
+    @Test
+    fun `should allow login when lockout has expired`() {
+        // Given: lockedUntil is in the past (lock expired)
+        val orgDoc = makeRootOrgDoc()
+        val unlockedUserDoc = makeUserDoc(active = true)
+        unlockedUserDoc.lockedUntil = Instant.now().minusSeconds(1)
+        val credDoc = makeCredDoc()
+        val tokenPair = makeTokenPair()
+
+        whenever(orgRepository.findRootByCode(any())).thenReturn(orgDoc)
+        whenever(userRepository.findByAccountName(any(), any())).thenReturn(unlockedUserDoc)
+        whenever(credentialsRepository.findByUserId(any())).thenReturn(credDoc)
+        whenever(passwordHasher.verify(any(), any())).thenReturn(true)
+        whenever(jwtIssuerService.issueTokenPair(any())).thenReturn(tokenPair)
+        doNothing().whenever(userRepository).update(any<UserDocument>())
+
+        // When
+        val result = authService.login("taichung-fab", "admin.system", "Admin@123")
+
+        // Then
+        assertEquals("access.token.value", result.accessToken)
+    }
+
+    @Test
+    fun `should call lockoutStateWriter recordFailedAttempt on wrong password`() {
+        // Given
+        val orgDoc = makeRootOrgDoc()
+        val userDoc = makeUserDoc(active = true)
+        userDoc.failedLoginCount = 2
+        val credDoc = makeCredDoc()
+
+        whenever(orgRepository.findRootByCode(any())).thenReturn(orgDoc)
+        whenever(userRepository.findByAccountName(any(), any())).thenReturn(userDoc)
+        whenever(credentialsRepository.findByUserId(any())).thenReturn(credDoc)
+        whenever(passwordHasher.verify(any(), any())).thenReturn(false)
+
+        // When / Then
+        org.junit.jupiter.api.assertThrows<UnauthorizedException> {
+            authService.login("taichung-fab", "admin.system", "WrongPass")
+        }
+
+        // Verify lockoutStateWriter was called to persist the failure
+        verify(lockoutStateWriter).recordFailedAttempt(eq(userDoc), any(), any())
+    }
+
+    @Test
+    fun `should lock account when failedLoginCount reaches threshold (lockoutStateWriter delegates)`() {
+        // Given: already at threshold - 1
+        val orgDoc = makeRootOrgDoc()
+        val userDoc = makeUserDoc(active = true)
+        userDoc.failedLoginCount = 4  // next failure triggers lockout (threshold=5)
+        val credDoc = makeCredDoc()
+
+        // Configure threshold on the service
+        authService.lockoutThreshold = 5
+        authService.lockoutDurationMinutes = 15
+
+        whenever(orgRepository.findRootByCode(any())).thenReturn(orgDoc)
+        whenever(userRepository.findByAccountName(any(), any())).thenReturn(userDoc)
+        whenever(credentialsRepository.findByUserId(any())).thenReturn(credDoc)
+        whenever(passwordHasher.verify(any(), any())).thenReturn(false)
+
+        // When / Then
+        org.junit.jupiter.api.assertThrows<UnauthorizedException> {
+            authService.login("taichung-fab", "admin.system", "WrongPass")
+        }
+
+        // Lockout state write is delegated to LockoutStateWriter (REQUIRES_NEW);
+        // actual persistence logic is tested in LockoutStateWriter unit tests.
+        verify(lockoutStateWriter).recordFailedAttempt(eq(userDoc), eq(5), eq(15L * 60))
+    }
+
+    @Test
+    fun `should call lockoutStateWriter resetLockout on successful login`() {
+        // Given: user had previous failures
+        val orgDoc = makeRootOrgDoc()
+        val userDoc = makeUserDoc(active = true)
+        userDoc.failedLoginCount = 3
+        val credDoc = makeCredDoc()
+        val tokenPair = makeTokenPair()
+
+        whenever(orgRepository.findRootByCode(any())).thenReturn(orgDoc)
+        whenever(userRepository.findByAccountName(any(), any())).thenReturn(userDoc)
+        whenever(credentialsRepository.findByUserId(any())).thenReturn(credDoc)
+        whenever(passwordHasher.verify(any(), any())).thenReturn(true)
+        whenever(jwtIssuerService.issueTokenPair(any())).thenReturn(tokenPair)
+
+        // When
+        authService.login("taichung-fab", "admin.system", "CorrectPass")
+
+        // Lockout state reset is delegated to LockoutStateWriter
+        verify(lockoutStateWriter).resetLockout(eq(userDoc))
+    }
+
+    // ─── S-015: Rate limiting ───────────────────────────────────────────────────
+
+    @Test
+    fun `should throw RateLimitExceededException when login rate limit is hit`() {
+        // Given: rateLimiter throws RateLimitViolation
+        whenever(rateLimiter.checkAndRecord(eq(RateLimiter.Action.LOGIN), any(), any()))
+            .thenThrow(RateLimiter.RateLimitViolation(60L))
+        whenever(rateLimiter.retryAfterSeconds(any(), any(), any())).thenReturn(60L)
+
+        // When / Then
+        org.junit.jupiter.api.assertThrows<RateLimitExceededException> {
+            authService.login("taichung-fab", "admin.system", "Admin@123", "192.168.1.100")
+        }
+    }
+
+    @Test
+    fun `should throw RateLimitExceededException when logout rate limit is hit`() {
+        // Given
+        whenever(rateLimiter.checkAndRecord(eq(RateLimiter.Action.LOGOUT), any(), org.mockito.kotlin.isNull()))
+            .thenThrow(RateLimiter.RateLimitViolation(30L))
+        whenever(rateLimiter.retryAfterSeconds(any(), any(), org.mockito.kotlin.isNull())).thenReturn(30L)
+
+        // When / Then
+        org.junit.jupiter.api.assertThrows<RateLimitExceededException> {
+            authService.logout("any-refresh-token", "192.168.1.100")
         }
     }
 }

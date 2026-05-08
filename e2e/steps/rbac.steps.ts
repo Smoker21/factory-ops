@@ -1,7 +1,7 @@
 import { Given, When, Then } from '@cucumber/cucumber';
 import { expect } from '@playwright/test';
 import type { FactoryOpsWorld } from '../support/world';
-import { loginAs, injectAuthToLocalStorage } from '../support/api';
+import { loginAs, injectAuthCookies } from '../support/api';
 import { FRONTEND_BASE_URL, BACKEND_BASE_URL } from '../playwright.config';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -14,7 +14,7 @@ const USERS = SEED.users;
 
 Given(/^我以 operator\.li\(OPERATOR\) 登入$/, async function (this: FactoryOpsWorld) {
   const user = await loginAs(this, 'operator.li', USERS['operator.li'].password);
-  await injectAuthToLocalStorage(this, user.accessToken, user.refreshToken);
+  await injectAuthCookies(this, user.accessToken, user.refreshToken);
   await this.page.goto(`${FRONTEND_BASE_URL}/`);
   await this.page.waitForLoadState('networkidle');
 });
@@ -91,14 +91,12 @@ Given('我以 admin.system 登入,access token 已超過 expiry', async function
 ) {
   const user = await loginAs(this, 'admin.system', USERS['admin.system'].password);
 
-  // Inject a syntactically-valid but expired access token.
-  // The axios interceptor in the frontend should detect 401 and call /v1/auth/refresh.
-  // We construct a fake expired token: valid JWT structure but exp in the past.
-  // Since we can't re-sign with the server's private key, we use a modified payload
-  // that will cause the backend to return 401.
+  // Inject a syntactically-valid but expired access_token cookie.
+  // The axios interceptor in the frontend will detect 401 and call /v1/auth/refresh.
+  // We use an expired fake token that will fail backend signature verification (401).
   const expiredAccessToken = buildExpiredFakeJwt();
 
-  await injectAuthToLocalStorage(this, expiredAccessToken, user.refreshToken);
+  await injectAuthCookies(this, expiredAccessToken, user.refreshToken);
   this.storeData('freshRefreshToken', user.refreshToken);
   await this.page.goto(`${FRONTEND_BASE_URL}/`);
   await this.page.waitForLoadState('domcontentloaded');
@@ -164,21 +162,13 @@ Then(/^後續 GET 應回 200\(用新 access token\)$/, async function (this: Fac
 Given('我以 admin.system 登入,access 與 refresh token 都已失效', async function (
   this: FactoryOpsWorld
 ) {
-  // Navigate to a neutral page, then set fake tokens via evaluate (NOT addInitScript,
-  // which would re-inject tokens on every navigation including the final /login redirect).
-  await this.page.goto('http://localhost:5173/login');
-  await this.page.waitForLoadState('domcontentloaded');
-
+  // Inject fake, expired cookies into the browser context.
+  // Both access_token and refresh_token will fail signature verification (401).
+  // The frontend interceptor will attempt refresh, get 401, then redirect to /login.
   const fakeAccessToken = buildExpiredFakeJwt();
   const fakeRefreshToken = 'this.is.not.a.valid.refresh.token';
 
-  await this.page.evaluate(
-    ({ a, r }: { a: string; r: string }) => {
-      localStorage.setItem('factory_ops_access_token', a);
-      localStorage.setItem('factory_ops_refresh_token', r);
-    },
-    { a: fakeAccessToken, r: fakeRefreshToken }
-  );
+  await injectAuthCookies(this, fakeAccessToken, fakeRefreshToken);
   // Don't navigate yet — "我打開任一受保護 API 頁面" will navigate to /projects
 });
 
@@ -194,20 +184,23 @@ Then('我應該被導回 {string}', async function (this: FactoryOpsWorld, expec
   expect(url.pathname).toBe(expectedPath);
 });
 
-Then('localStorage 應被清空', async function (this: FactoryOpsWorld) {
-  // Wait for the auth interceptor to clear storage after failed refresh.
-  // The axios interceptor calls redirectToLogin() which removes both tokens.
+Then('瀏覽器 cookies 應被清空', async function (this: FactoryOpsWorld) {
+  // After a failed refresh the browser is de-authenticated.
+  // In cookie-based auth (ADR-0015), tokens are never in localStorage — this step validates
+  // that auth cookies are absent or have been cleared (Max-Age=0).
   await this.page.waitForLoadState('networkidle');
   await this.page.waitForTimeout(2000);
 
-  const accessToken = await this.page.evaluate(() =>
-    localStorage.getItem('factory_ops_access_token')
-  );
-  const refreshToken = await this.page.evaluate(() =>
-    localStorage.getItem('factory_ops_refresh_token')
-  );
-  expect(accessToken, 'factory_ops_access_token should be cleared from localStorage').toBeNull();
-  expect(refreshToken, 'factory_ops_refresh_token should be cleared from localStorage').toBeNull();
+  const cookies = await this.context.cookies();
+  const accessCookie = cookies.find((c) => c.name === 'access_token');
+  const refreshCookie = cookies.find((c) => c.name === 'refresh_token');
+
+  // Cookies should be absent or have empty/expired values
+  const accessCleared = !accessCookie || accessCookie.value === '' || accessCookie.value.length < 5;
+  const refreshCleared = !refreshCookie || refreshCookie.value === '' || refreshCookie.value.length < 5;
+
+  expect(accessCleared, 'access_token cookie should be cleared after refresh failure').toBe(true);
+  expect(refreshCleared, 'refresh_token cookie should be cleared after refresh failure').toBe(true);
 });
 
 // ---------------------------------------------------------------------------

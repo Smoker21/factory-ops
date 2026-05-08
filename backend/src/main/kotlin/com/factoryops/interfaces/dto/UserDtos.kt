@@ -12,11 +12,7 @@ data class CreateUserRequest(
     @field:Size(max = 30, message = "accountName must be at most 30 characters")
     val accountName: String = "",
 
-    val roles: List<String> = emptyList(),
-
-    @field:NotBlank(message = "defaultPassword is required")
-    @field:Size(min = 8, message = "defaultPassword must be at least 8 characters")
-    val defaultPassword: String = ""
+    val roles: List<String> = emptyList()
 )
 
 data class UpdateUserRequest(
@@ -40,6 +36,16 @@ data class UserResponse(
 data class UserPageResponse(
     val items: List<UserResponse>,
     val pageInfo: PageInfo
+)
+
+/**
+ * Response for user creation that includes the one-time temporary password.
+ * The temporary password is shown only in this response and is never stored in plain text.
+ */
+data class CreateUserResponse(
+    val user: UserResponse,
+    /** One-time temporary password. Display to the authorized caller and do not log. */
+    val temporaryPassword: String
 )
 
 fun User.toResponse(): UserResponse = UserResponse(

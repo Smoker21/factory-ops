@@ -22,6 +22,8 @@ object UserMapper {
         primaryOrgPath = doc.primaryOrgPath.map { it.toHexString() },
         hrSyncedAt = doc.hrSyncedAt,
         active = doc.active,
+        failedLoginCount = doc.failedLoginCount,
+        lockedUntil = doc.lockedUntil,
         schemaVersion = doc.schemaVersion,
         createdAt = doc.createdAt,
         deletedAt = doc.deletedAt
@@ -41,6 +43,8 @@ object UserMapper {
         doc.primaryOrgPath = user.primaryOrgPath.map { ObjectId(it) }
         doc.hrSyncedAt = user.hrSyncedAt
         doc.active = user.active
+        doc.failedLoginCount = user.failedLoginCount
+        doc.lockedUntil = user.lockedUntil
         doc.schemaVersion = user.schemaVersion
         doc.createdAt = user.createdAt
         doc.deletedAt = user.deletedAt

@@ -29,3 +29,23 @@ class ExternalServiceException(message: String, errorCode: String = "external_se
 
 class StateTransitionException(message: String, errorCode: String = "invalid_state_transition") :
     DomainException(message, errorCode)
+
+/**
+ * Account lockout: raised when an account is locked due to repeated failed login attempts.
+ * Maps to HTTP 401 with RFC 7807 detail and retryAfterSeconds extension.
+ */
+class AccountLockedException(
+    message: String,
+    val retryAfterSeconds: Long,
+    errorCode: String = "ACCOUNT_LOCKED"
+) : DomainException(message, errorCode)
+
+/**
+ * Rate-limit exceeded: raised when a per-IP or per-account rate window is saturated.
+ * Maps to HTTP 429 with Retry-After header.
+ */
+class RateLimitExceededException(
+    message: String,
+    val retryAfterSeconds: Long,
+    errorCode: String = "RATE_LIMIT_EXCEEDED"
+) : DomainException(message, errorCode)

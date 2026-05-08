@@ -1,65 +1,70 @@
 /* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useCallback, useEffect, useState } from 'react'
 import type { User } from '@/api/types'
-import { decodeJwt } from './jwtUtils'
+import { getMe } from '@/api/users'
 import logger from '@/lib/logger'
 
-const ACCESS_TOKEN_KEY = 'factory_ops_access_token'
-const REFRESH_TOKEN_KEY = 'factory_ops_refresh_token'
+// Auth state no longer holds token strings — authentication is handled
+// exclusively via httpOnly cookies managed by the browser (ADR-0015).
+// On reload we probe GET /me to determine whether the session is still valid.
 
 export interface AuthState {
-  accessToken: string | null
-  refreshToken: string | null
   user: User | null
   isAuthenticated: boolean
+  isLoading: boolean
 }
 
 export interface AuthContextValue extends AuthState {
-  login: (accessToken: string, refreshToken: string, user: User) => void
+  /** Called after a successful login to set the current user. */
+  login: (user: User) => void
+  /** Clears local user state; the caller is responsible for the API logout call. */
   logout: () => void
   setUser: (user: User) => void
-  updateTokens: (accessToken: string, refreshToken: string) => void
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<AuthState>(() => {
-    const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY)
-    const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
-
-    if (accessToken && refreshToken) {
-      const payload = decodeJwt(accessToken)
-      if (payload) {
-        const claim = payload.groups ?? payload.roles ?? []
-        const roles = claim.filter((r) => typeof r === 'string') as User['roles']
-        const user: User = {
-          id: payload.userId,
-          rootOrgId: payload.rootOrgId,
-          accountName: payload.accountName,
-          displayName: payload.displayName ?? payload.accountName,
-          roles,
-          groupIds: payload.groupIds ?? [],
-          orgManagerScopes: payload.orgManagerScopes ?? [],
-          active: true,
-        }
-        return { accessToken, refreshToken, user, isAuthenticated: true }
-      }
-    }
-    return { accessToken: null, refreshToken: null, user: null, isAuthenticated: false }
+  const [state, setState] = useState<AuthState>({
+    user: null,
+    isAuthenticated: false,
+    isLoading: true,
   })
 
-  const login = useCallback((accessToken: string, refreshToken: string, user: User) => {
-    localStorage.setItem(ACCESS_TOKEN_KEY, accessToken)
-    localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
-    setState({ accessToken, refreshToken, user, isAuthenticated: true })
+  // On mount: probe /me to restore session from existing cookies.
+  // If the access_token cookie is still valid the server returns 200 + user.
+  // If it has expired the axios interceptor in client.ts will attempt a silent
+  // refresh; on success the retry returns 200 and we restore the session.
+  // Only a definitive 401 after refresh failure leaves us unauthenticated.
+  useEffect(() => {
+    let cancelled = false
+
+    async function bootstrapSession() {
+      try {
+        const user = await getMe()
+        if (!cancelled) {
+          setState({ user, isAuthenticated: true, isLoading: false })
+          logger.debug('Session restored from cookie', { accountName: user.accountName })
+        }
+      } catch {
+        if (!cancelled) {
+          setState({ user: null, isAuthenticated: false, isLoading: false })
+          logger.debug('No active session (cookie absent or expired)')
+        }
+      }
+    }
+
+    void bootstrapSession()
+    return () => { cancelled = true }
+  }, [])
+
+  const login = useCallback((user: User) => {
+    setState({ user, isAuthenticated: true, isLoading: false })
     logger.info('User logged in', { accountName: user.accountName })
   }, [])
 
   const logout = useCallback(() => {
-    localStorage.removeItem(ACCESS_TOKEN_KEY)
-    localStorage.removeItem(REFRESH_TOKEN_KEY)
-    setState({ accessToken: null, refreshToken: null, user: null, isAuthenticated: false })
+    setState({ user: null, isAuthenticated: false, isLoading: false })
     logger.info('User logged out')
   }, [])
 
@@ -67,33 +72,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setState((prev) => ({ ...prev, user }))
   }, [])
 
-  const updateTokens = useCallback((accessToken: string, refreshToken: string) => {
-    localStorage.setItem(ACCESS_TOKEN_KEY, accessToken)
-    localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
-    const payload = decodeJwt(accessToken)
-    const claim = payload?.groups ?? payload?.roles
-    const refreshedRoles = (Array.isArray(claim)
-      ? claim.filter((r) => typeof r === 'string')
-      : null) as User['roles'] | null
-    setState((prev) => ({
-      ...prev,
-      accessToken,
-      refreshToken,
-      user: prev.user
-        ? {
-            ...prev.user,
-            roles: refreshedRoles ?? prev.user.roles,
-          }
-        : prev.user,
-    }))
-  }, [])
-
-  useEffect(() => {
-    logger.debug('Auth state initialized', { isAuthenticated: state.isAuthenticated })
-  }, [state.isAuthenticated])
-
   return (
-    <AuthContext.Provider value={{ ...state, login, logout, setUser, updateTokens }}>
+    <AuthContext.Provider value={{ ...state, login, logout, setUser }}>
       {children}
     </AuthContext.Provider>
   )

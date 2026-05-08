@@ -8,6 +8,14 @@
 
 ### Added
 
+- **里程碑 5 計畫書（2026-05-07）**：
+  - `docs/release/m5-plan.md`：M5「Hardening + Spec Lock-in」完整規劃
+    - 範圍 freeze：7 spec 衍生 Q + 7 security P1 + 10 domain invariants P1（共 24 條）
+    - **6 個 sub-phase 序列執行**（M5.1 spec → M5.2 data prep → M5.3 backend security → M5.4 invariants+Q-23 OR → M5.5 frontend → M5.6 release）—— data 層變動集中於 M5.2 由 mongodb-modeler 一棒收完(2026-05-07 使用者 Q4 拍板 B 合棒);因 quarkus-backend-builder 嚴禁改 `domain/` 與 `docs/data/`(CLAUDE.md § Agent 讀寫邊界)
+    - 每階段條列 scope / Impact Matrix CT-N / 驗收 checklist / 啟動指令
+    - 已確認可從 STATUS 移除的過時項：P-001（cursor pagination 已實作）、S-008-ext（revoked_tokens TTL 已建)
+    - **Q-18~Q-24 七題已於 2026-05-07 規劃會議全拍板**(見 m5-plan.md §3.1):Q-19 transfer-manager(HR 端負責 deputy)/ Q-21 reject 清空 / Q-23 **採 OR 白名單** / Q-23 衍生 Q5「同人多角色」**不擋**(工廠派工輕量確認,非品保雙簽);Q-23 OR 切換落入 M5.4 code change
+    - 明確 defer 到 M6+：P-002 增量同步、P2 / 雜項 backlog、Notification、Daily Work Board
 - 方法論基建：
   - `docs/release/impact-matrix.md`：15 種變更類型(`CT-1` ~ `CT-15`)對應的必動清單
   - `docs/release/checklist.md`：可重用的 Release Checklist 範本（複製到 PR description 逐條勾）
@@ -21,7 +29,9 @@
 
 ### Changed
 
-- `STATUS.md` 依 Compact 原則精簡（230 行 → ~85 行）：刪除 v1.3 重整摘要、給 mongodb-modeler 的銜接訊息、Q-18 ~ Q-24、驗收檢核清單；歸檔內容已存於 `docs/spec/STATUS.md`
+- `STATUS.md`:加入 M5 里程碑列;P1 Backlog 每條標註 M5 sub-phase 歸屬(M5.2 / M5.3 / M5.4)或 defer 標記;P-001、S-008-ext 從 P1 移到「已剔除/過時項」區
+- `CLAUDE.md`:M5+ 區塊從 placeholder 改為具體 M5 sub-phase 表(指向 `docs/release/m5-plan.md`)+ M6+ 候選主題清單
+- `STATUS.md` 依 Compact 原則精簡(230 行 → ~85 行):刪除 v1.3 重整摘要、給 mongodb-modeler 的銜接訊息、Q-18 ~ Q-24、驗收檢核清單;歸檔內容已存於 `docs/spec/STATUS.md`
 - `CLAUDE.md` 反映 M1-M4 完成現況：M1-M4 詳述壓成完成歷史表（指向 sub-STATUS / CHANGELOG），新增 M5+ placeholder 與通用啟動範本
 - `CLAUDE.md` 目錄結構新增 `docs/release/`、`scripts/`、`e2e/`、`docker/` 條目
 - `CLAUDE.md` 「文件 / 自主程度」子節改為引用新的 § STATUS.md Compact、§ Agent 協作協定、§ ADR 門檻

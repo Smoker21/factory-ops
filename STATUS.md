@@ -1,8 +1,8 @@
 # 工廠值班工作管理系統 — 開發狀態
 
-**最後更新**: 2026-05-06
+**最後更新**: 2026-05-07
 **目前版本**: v1.0.0-M4 / spec v1.3.0 / data-model v1.0.0
-**下一個里程碑**: M5+(主題待規劃)
+**下一個里程碑**: **M5 — Hardening + Spec Lock-in**(計畫已就位,待使用者啟動)
 
 ---
 
@@ -14,6 +14,7 @@
 | 2 | 資料模型 | mongodb-modeler | ✅ COMPLETED | `docs/data/STATUS.md` |
 | 3 | 後端 + 前端骨架 | quarkus-backend-builder → react-frontend-builder | ✅ COMPLETED | `docs/backend/STATUS.md`、`docs/frontend/STATUS.md` |
 | 4 | 測試 + 審查 + 文件 + 部署 | test-engineer → code-reviewer → doc-devops | ✅ COMPLETED (2026-05-04) | `docs/test/STATUS.md`、`docs/review/STATUS.md`、`docs/devops/STATUS.md`、CHANGELOG `[1.0.0-M4]` |
+| 5 | **Hardening + Spec Lock-in**(6 棒序列) | spec-architect → mongodb-modeler → quarkus-backend-builder → quarkus-backend-builder → react-frontend-builder → code-reviewer + doc-devops | 📋 PLANNED (2026-05-07,Q1~Q5 + Q-18~24 全拍板) | **`docs/release/m5-plan.md`** |
 
 各里程碑完成摘要見 `CHANGELOG.md`。
 
@@ -21,30 +22,35 @@
 
 ## P1 / P2 Backlog(M4 code review 留下)
 
+> **M5 範圍標記**:標 `→ M5.x` 表示已納入 M5 計畫(`docs/release/m5-plan.md`),待 M5 驗收後移除。
+
 ### P1(下一版本迭代前修)
 
-| 編號 | 位置 | 說明 |
-|---|---|---|
-| S-009 | `frontend/src/api/client.ts` | JWT 存 localStorage → 改 httpOnly cookie(XSS 風險) |
-| P-001 | 所有列表 Resource | Cursor pagination 實作(目前回傳 null cursor,NFR p95 < 300ms 未達) |
-| S-016 | AuthService | 連續失敗登入鎖定機制缺失 |
-| S-008-ext | RevocationStore | Logout blacklist 後需定期清理過期 token(TTL index) |
-| C-005 | DispatchService.convertToTask | convertToTask 未驗證 AR 狀態 + priority 映射 |
-| C-006 | TaskService | force-complete 只驗 dualSign,未驗 actor 是 Group member |
-| C-007 | TaskService.buildQaReviewPolicy | mapNotNull 靜默忽略找不到的 group → 改 throw |
-| C-008 | TaskService | IN_REVIEW → DONE 兩條路徑行為不一致 |
-| C-009 | ProjectService | PAUSED → COMPLETED 狀態流缺漏 |
-| C-010 | ProjectService.createProject | 未驗證 `due > start` |
-| C-011 | TaskService.createTask | 未驗證 `dueAt ≥ project.startAt` |
-| C-012 | TaskService.addAssignees | 未驗證 user 全部 active 且同 rootOrgId |
-| C-014 | OrganizationService.deleteOrg | 未擋有 active resources(Group/Project) |
-| C-015 | OutboxPoller | retryCount 無上限且無 dead-letter |
-| P-002 | 所有列表端點 | `?since=` / ETag / If-Modified-Since 增量同步未實作 |
-| S-010 | `application.properties` | CORS 設定缺 prod origin env 機制(現已修 env,但 prod override 待驗) |
-| S-011 | UserService.createUser | 明文 defaultPassword + 無強度檢查 |
-| S-013 | UserRepository.searchByKeyword | regex ReDoS 潛在風險 |
-| S-015 | AuthResource | logout / changePassword 無 rate-limit |
-| S-017 | LoginRequest | password 缺 @Size(max=128) → bcrypt CPU 高 |
+| 編號 | 位置 | 說明 | M5 歸屬 |
+|---|---|---|---|
+| S-009 | `frontend/src/api/client.ts` | JWT 存 localStorage → 改 httpOnly cookie(XSS 風險) | → M5.3 + M5.5 |
+| S-016 | AuthService | 連續失敗登入鎖定機制缺失 | → M5.2(欄位)+ M5.3(邏輯) |
+| C-005 | DispatchService.convertToTask | convertToTask 未驗證 AR 狀態 + priority 映射 | → M5.4 |
+| C-006 | TaskService | force-complete 只驗 dualSign,未驗 actor 是 Group member | → M5.4 |
+| C-007 | TaskService.buildQaReviewPolicy | mapNotNull 靜默忽略找不到的 group → 改 throw | → M5.4 |
+| C-008 | TaskService | IN_REVIEW → DONE 兩條路徑行為不一致 | → M5.4 |
+| C-009 | ProjectService | PAUSED → COMPLETED 狀態流缺漏 | → M5.4 |
+| C-010 | ProjectService.createProject | 未驗證 `due > start` | → M5.4 |
+| C-011 | TaskService.createTask | 未驗證 `dueAt ≥ project.startAt` | → M5.4 |
+| C-012 | TaskService.addAssignees | 未驗證 user 全部 active 且同 rootOrgId | → M5.4 |
+| C-014 | OrganizationService.deleteOrg | 未擋有 active resources(Group/Project) | → M5.4 |
+| C-015 | OutboxPoller | retryCount 無上限且無 dead-letter | → M5.2(document)+ M5.4(邏輯) |
+| Q-23 OR | TaskService.kt:353-354 | 雙簽 AND 切換成 OR 白名單語意(2026-05-07 拍板) | → M5.4 |
+| P-002 | 所有列表端點 | `?since=` / ETag / If-Modified-Since 增量同步未實作 | **defer M6** |
+| S-010 | `application.properties` | CORS 設定缺 prod origin env 機制(現已修 env,但 prod override 待驗) | → M5.3 |
+| S-011 | UserService.createUser | 明文 defaultPassword + 無強度檢查 | → M5.3 |
+| S-013 | UserRepository.searchByKeyword | regex ReDoS 潛在風險 | → M5.3 |
+| S-015 | AuthResource | logout / changePassword 無 rate-limit | → M5.3 |
+| S-017 | LoginRequest | password 缺 @Size(max=128) → bcrypt CPU 高 | → M5.3 |
+
+> **已剔除**(M4 完成,STATUS 文字過時 — 待 M5.5 release 階段同步從 CHANGELOG `[1.0.0-M5]` 補一筆 Status hygiene):
+> - ~~P-001 Cursor pagination~~ — 6 個 service 已實作 `nextCursor`(M4 已完成,證據見 m5-plan §2.2)
+> - ~~S-008-ext revoked_tokens TTL~~ — `init-indexes.js` 已配 `expireAfterSeconds:0`(M4 已完成)
 
 ### P2(後續迭代)
 

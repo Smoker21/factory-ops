@@ -11,7 +11,7 @@
 - 部署:Web (React, 行動裝置友善) + 未來 Native App
 - 後端:Kotlin + Quarkus + MongoDB
 
-**目前狀態**:M1-M4 已完成(2026-05-04);M5+ 主題待規劃。詳見 `STATUS.md`、`CHANGELOG.md`。
+**目前狀態**:M1-M4 已完成(2026-05-04);**M5(Hardening + Spec Lock-in)計畫已就位**(2026-05-07,`docs/release/m5-plan.md`),待使用者 review 後啟動。後續主題見 `STATUS.md`、`CHANGELOG.md`。
 
 ## 開發流程(里程碑模式)
 
@@ -26,9 +26,31 @@
 | 3 | 後端 + 前端骨架 | quarkus-backend-builder → react-frontend-builder | 2026-05-04 | `docs/backend/STATUS.md`、`docs/frontend/STATUS.md`、CHANGELOG `[1.0.0-M3]` |
 | 4 | 測試 + 審查 + 文件 + 部署 | test-engineer → code-reviewer → doc-devops | 2026-05-04 | `docs/test/STATUS.md`、`docs/review/STATUS.md`、`docs/devops/STATUS.md`、CHANGELOG `[1.0.0-M4]` |
 
-### M5+:待規劃
+### 里程碑 5:Hardening + Spec Lock-in(計畫中,2026-05-07)
 
-格式骨架(待使用者指定主題後填入):
+**主題**:收 P1 Backlog 安全 / 一致性債 + 拍板衍生 Open Questions Q-18 ~ Q-24
+**完整計畫書**:`docs/release/m5-plan.md`(主 agent 與所有 sub-agent **必讀**;啟動指令、scope freeze、DOD、回退策略全在裡面)
+**Sub-phase**(序列,6 棒;data 層變動集中於 M5.2 由 mongodb-modeler 一棒收完 — 因 quarkus-backend-builder 嚴禁改 `domain/` 與 `docs/data/`):
+
+| 階段 | 主題 | 負責 agent | 條目數 |
+|---|---|---|---|
+| M5.1 | Spec v1.4 lock-in(Q-18 ~ Q-24 拍板) | spec-architect | 7 |
+| M5.2 | Data model preparation(User lockout 欄位 + OutboxDeadLetter document) | mongodb-modeler | — |
+| M5.3 | Backend Security Hardening(S-009 ~ S-017) | quarkus-backend-builder → test-engineer | 7 |
+| M5.4 | Domain Invariants + Q-23 OR(C-005 ~ C-015 + 雙簽語意切換) | quarkus-backend-builder → test-engineer | 11 |
+| M5.5 | Frontend Hardening(配合 S-009 cookie 改造) | react-frontend-builder → test-engineer | 1+ |
+| M5.6 | Compact + Release(複審 / tag v1.0.0-M5) | code-reviewer → doc-devops | — |
+
+**驗收重點**:見 `docs/release/m5-plan.md` §4 Definition of Done。
+
+### M6+:候選主題(暫存,待 M5 驗收後再選)
+
+- Notification / Webhook 實作(spec 預留 Notification context)
+- Daily Work Board UI(Q-8 拍板的四區塊儀表板)
+- P-002 增量同步(`?since=` / ETag / If-Modified-Since)
+- 行動裝置 native app skeleton
+
+格式骨架(待使用者選定主題後填入):
 
 ```
 ### 里程碑 N:<主題>

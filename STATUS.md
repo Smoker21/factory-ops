@@ -1,8 +1,8 @@
 # 工廠值班工作管理系統 — 開發狀態
 
-**最後更新**: 2026-05-07
-**目前版本**: v1.0.0-M4 / spec v1.3.0 / data-model v1.0.0
-**下一個里程碑**: **M5 — Hardening + Spec Lock-in**(計畫已就位,待使用者啟動)
+**最後更新**: 2026-05-09
+**目前版本**: **v1.0.0-M5** / spec v1.5.0 / data-model v1.1.0
+**目前里程碑**: ✅ M5 COMPLETED 2026-05-09
 
 ---
 
@@ -10,220 +10,62 @@
 
 | # | 里程碑 | 負責 agent | 狀態 | 詳細紀錄 |
 |---|---|---|---|---|
-| 1 | 規格 + 領域設計 | spec-architect | ✅ COMPLETED | `docs/spec/STATUS.md` |
-| 2 | 資料模型 | mongodb-modeler | ✅ COMPLETED | `docs/data/STATUS.md` |
-| 3 | 後端 + 前端骨架 | quarkus-backend-builder → react-frontend-builder | ✅ COMPLETED | `docs/backend/STATUS.md`、`docs/frontend/STATUS.md` |
+| 1 | 規格 + 領域設計 | spec-architect | ✅ COMPLETED (2026-05-04) | `docs/spec/STATUS.md` |
+| 2 | 資料模型 | mongodb-modeler | ✅ COMPLETED (2026-05-04) | `docs/data/STATUS.md` |
+| 3 | 後端 + 前端骨架 | quarkus-backend-builder → react-frontend-builder | ✅ COMPLETED (2026-05-04) | `docs/backend/STATUS.md`、`docs/frontend/STATUS.md` |
 | 4 | 測試 + 審查 + 文件 + 部署 | test-engineer → code-reviewer → doc-devops | ✅ COMPLETED (2026-05-04) | `docs/test/STATUS.md`、`docs/review/STATUS.md`、`docs/devops/STATUS.md`、CHANGELOG `[1.0.0-M4]` |
-| 5 | **Hardening + Spec Lock-in**(6 棒序列) | spec-architect → mongodb-modeler → quarkus-backend-builder → quarkus-backend-builder → react-frontend-builder → code-reviewer + doc-devops | 📋 PLANNED (2026-05-07,Q1~Q5 + Q-18~24 全拍板) | **`docs/release/m5-plan.md`** |
+| 5 | Hardening + Spec Lock-in | spec-architect → mongodb-modeler → quarkus-backend-builder → react-frontend-builder → code-reviewer + doc-devops | ✅ COMPLETED (2026-05-09) | `docs/review/STATUS.md`、CHANGELOG `[1.0.0-M5]` |
 
 各里程碑完成摘要見 `CHANGELOG.md`。
 
 ---
 
-## P1 / P2 Backlog(M4 code review 留下)
+## P1 Backlog(M6+ 候選)
 
-> **M5 範圍標記**:標 `→ M5.x` 表示已納入 M5 計畫(`docs/release/m5-plan.md`),待 M5 驗收後移除。
+| 編號 | 說明 | 來源 |
+|---|---|---|
+| P1-1 | `LockoutStateWriter` 走 `UserRepository` 抽象（目前直呼叫 `persistOrUpdate()`） | M5.6 review |
+| P1-2 | `OutboxPoller.pollAndProcess()` dead-letter 寫入 + 原 entry 標記非原子（最終一致性，冪等保護）— M6 補 `@Transactional` + ADR-0009 v1.5 Amendment | M5.6 review |
+| P1-3 | CSRF dual-mode 強制截止點（ADR-0015 v1.6 Amendment + `security.csrf.strict-mode` toggle） | M5.6 review |
+| P-002 | `?since=` / ETag / If-Modified-Since 增量同步 | M4 defer |
 
-### P1(下一版本迭代前修)
-
-| 編號 | 位置 | 說明 | M5 歸屬 |
-|---|---|---|---|
-| S-009 | `frontend/src/api/client.ts` | JWT 存 localStorage → 改 httpOnly cookie(XSS 風險) | → M5.3 + M5.5 |
-| S-016 | AuthService | 連續失敗登入鎖定機制缺失 | → M5.2(欄位)+ M5.3(邏輯) |
-| C-005 | DispatchService.convertToTask | convertToTask 未驗證 AR 狀態 + priority 映射 | → M5.4 |
-| C-006 | TaskService | force-complete 只驗 dualSign,未驗 actor 是 Group member | → M5.4 |
-| C-007 | TaskService.buildQaReviewPolicy | mapNotNull 靜默忽略找不到的 group → 改 throw | → M5.4 |
-| C-008 | TaskService | IN_REVIEW → DONE 兩條路徑行為不一致 | → M5.4 |
-| C-009 | ProjectService | PAUSED → COMPLETED 狀態流缺漏 | → M5.4 |
-| C-010 | ProjectService.createProject | 未驗證 `due > start` | → M5.4 |
-| C-011 | TaskService.createTask | 未驗證 `dueAt ≥ project.startAt` | → M5.4 |
-| C-012 | TaskService.addAssignees | 未驗證 user 全部 active 且同 rootOrgId | → M5.4 |
-| C-014 | OrganizationService.deleteOrg | 未擋有 active resources(Group/Project) | → M5.4 |
-| C-015 | OutboxPoller | retryCount 無上限且無 dead-letter | → M5.2(document)+ M5.4(邏輯) |
-| Q-23 OR | TaskService.kt:353-354 | 雙簽 AND 切換成 OR 白名單語意(2026-05-07 拍板) | → M5.4 |
-| P-002 | 所有列表端點 | `?since=` / ETag / If-Modified-Since 增量同步未實作 | **defer M6** |
-| S-010 | `application.properties` | CORS 設定缺 prod origin env 機制(現已修 env,但 prod override 待驗) | → M5.3 |
-| S-011 | UserService.createUser | 明文 defaultPassword + 無強度檢查 | → M5.3 |
-| S-013 | UserRepository.searchByKeyword | regex ReDoS 潛在風險 | → M5.3 |
-| S-015 | AuthResource | logout / changePassword 無 rate-limit | → M5.3 |
-| S-017 | LoginRequest | password 缺 @Size(max=128) → bcrypt CPU 高 | → M5.3 |
-
-> **已剔除**(M4 完成,STATUS 文字過時 — 待 M5.5 release 階段同步從 CHANGELOG `[1.0.0-M5]` 補一筆 Status hygiene):
-> - ~~P-001 Cursor pagination~~ — 6 個 service 已實作 `nextCursor`(M4 已完成,證據見 m5-plan §2.2)
-> - ~~S-008-ext revoked_tokens TTL~~ — `init-indexes.js` 已配 `expireAfterSeconds:0`(M4 已完成)
-
-### P2(後續迭代)
+## P2 Backlog(後續迭代)
 
 | 編號 | 說明 |
 |---|---|
+| P2-1 | ADR-0015 未文件化 401 vs 403 執行順序 |
+| P2-2 | `TaskService.kt` Role.valueOf `mapNotNull` 路徑靜默丟棄 |
+| P2-3 | CsrfFilter exempt path 純 prefix match（缺邊界檢查） |
+| P2-4 | CSRF exempt-paths 邊界檢查（`path == it \|\| path.startsWith("$it/")`） |
+| P2-5 | (已修) `%test.auth.cookie.secure=false` — M5.6 已補 |
+| P2-6 | `OutboxPoller` retryCount > 10 邊界說明缺 doc 補充 |
+| P2-7 | Swagger UI `%prod.quarkus.swagger-ui.always-include=false`（M6 加） |
 | C-017 | transfer-manager 後 JWT orgManagerScopes 過期 |
 | C-018 | addAssignees 後未重做 INV-1 owner 檢查 |
-| P-004 | TaskService.listTasks type 用 in-memory filter |
-| P-005 | DispatchService.listActionRequests requesterId in-memory filter |
-| P-006 | listOrgs(underOrgId) 無 rootOrgId 條件 |
-| P-007 | OutboxPoller 無 sharding key |
-| P-008 | 前端缺 React.memo / 虛擬化 |
-| P-009 | ProjectService.addMember 5 個 query 可合 $addToSet |
-| P-010 | bundle size 未驗;MUI 全量引入 |
-| S-014 | MarkdownRenderer attachment URL 未驗 ObjectId 格式 |
-| S-018 | login 失敗 audit trail 不利分析 |
-| S-019 | GlobalExceptionMapper log 可能帶到 password |
-| S-020 | /health path 未加入公開白名單 |
-| M-001 | OutboxPoller 留 TODO(CLAUDE.md 禁止) |
-| M-002 | i18n en-US.json 留 _comment: TODO |
-| M-004 | TaskService.createTask inline mapping 25 行 |
-| M-005 | TaskService TaskMapper.run idiom 困惑 |
-| M-006 | GroupService.listGroups in-memory filter |
-| M-007 | UserService.searchUsers 無 rootOrgId scope |
-| 其餘 Info | 見 `docs/review/code-review-report.md` §2.5 |
+| P-004 ~ P-010 | 效能項（in-memory filter、bundle size 等） |
+| S-014 / S-018 / S-019 / S-020 | 安全雜項 |
+| M-001 / M-002 / M-004 ~ M-007 | 雜項清理 |
 
 ---
 
-## 里程碑 1 — v1.3 重整摘要
+## M6+ 候選主題
 
-**狀態**: READY_FOR_REVIEW
-**完成時間**: 2026-05-04
+- **Notification / Webhook 實作**（spec 預留 Notification context）
+- **Daily Work Board UI**（Q-8 拍板的四區塊儀表板）
+- **P-002 增量同步**（`?since=` / ETag / If-Modified-Since）
+- **行動裝置 native app skeleton**
+- **P1-1 ~ P1-3 架構債收整**（LockoutStateWriter / OutboxPoller / CSRF strict-mode）
 
-### v1.3 變更(本次,基於使用者 Q-1~Q-17 全套拍板)
-
-1. **Single-hop Direct Dispatch to Leaf**(Q-14):刪除多層 Relay 流程;`targetOrgId` 必為 leaf;ActionRequest 移除 `relayChain[]`、`RELAYED` 子狀態、`/relay` 端點;ADR-0008 全面改寫
-2. **Organization 單 manager + 多 leaders**(Q-15):移除 `leaderId` 單值;加 `managerId`(單)+ `leaderIds[]`(0..N);ORG_MANAGER 改為衍生;新 ADR-0010
-3. **Group QA 雙簽**(Q-7):Group 加 `settings.qa`;Task 建立時 snapshot policy(Group settings 後續變更不影響);新 ADR-0011
-4. **跨 leaf 協作禁止**(Q-13):INV-19 強化;US-A5 改寫
-5. **時間戳記**(Q-17):儲存 UTC `Instant`,wire ISO 8601 + offset;字串欄位允許 Unicode 多語系混合;取消 GLOBAL Template 多語系欄位設計
-6. **HR Mock REST 規格**(Q-16):ADR-0007 加 v1.3 Amendment(完整規格 / 降級 / 正式串接 checklist)
-7. **Daily Work Board**(Q-8):新 §FR-Frontend(my owned / my assigned / overdue / pending review 四區塊;不做甘特圖)
-8. **Q-1 ~ Q-17 全部拍板並補完中文敘述**
-
-### Q-1 ~ Q-17 拍板狀態(本次)
-全部標**拍板**;詳見 docs/spec/requirements.md §8.1 表格(每題附完整中文答覆)。
-
-### 衍生新 Open Questions(待用戶最終確認;不阻擋下一棒)
-- Q-18 跨層 dispatch 發起範圍(任一上級 vs 僅 root)
-- Q-19 Manager 休假代理(deputy 欄位 vs transfer-manager)
-- Q-20 leaf 端 reject 是否主動通知 originator
-- Q-21 QA Review reject 是否清空既往 reviews
-- Q-22 Group settings 是否需專屬 versioning
-- Q-23 requiredReviewerRoles AND vs OR
-- Q-24 時間戳記儲存層是否保留發起端原始 offset
-
-### 變動檔案
-
-| 檔案 | 動作 |
-|---|---|
-| `docs/spec/requirements.md` | **重寫至 v1.3**(§1 不動,§2~§10 全部更新;§8 表格全 Q 補完中文敘述,新增 Q-18~Q-24) |
-| `docs/spec/domain-model.md` | **重寫至 v1.3**(Org managerId/leaderIds、Group.settings.qa、Task qa snapshot、ActionRequest 單跳模型、新 sequence diagrams) |
-| `docs/spec/openapi.yaml` | **重大更新至 v1.3**(transfer-manager / leaders / Group settings PATCH / Task review;移除 relay;Schema 對齊) |
-| `docs/adr/0007-user-hr-integration.md` | **加 v1.3 Amendment**:HR Mock REST 完整規格 |
-| `docs/adr/0008-action-request-cross-org-dispatch.md` | **v1.3 全面改寫**:Single-hop Direct Dispatch |
-| `docs/adr/0010-org-manager-and-leaders.md` | **新增** |
-| `docs/adr/0011-group-settings-qa-dualsign.md` | **新增** |
-| `docs/spec/STATUS.md` | **更新至 v1.3** |
-| `STATUS.md`(本檔) | **更新至 v1.3** |
-
-### 累計設計決策(v1.3)
-1. Bounded Contexts:同 v1.2(Identity & Multi-Tenancy / Workforce / Project Management / Template / Content & Attachment / External Integration / Notification 預留)
-2. 主要 Aggregates:`Organization`(樹,managerId+leaderIds)、`User`(HR 投影,orgManagerScopes 衍生)、`Group`(平面,加 settings.qa)、`GroupMembership`、`Membership`、`Project`(同 leaf 強化)、`Task`(加 qaReviewPolicy/qaReviews)、`ActionRequest`(targetOrgId leaf)、`ProjectTemplate`、`TaskTemplate`、`Attachment`、`Webhook`
-3. **Organization 多型樹 + 單 manager + 多 leaders**(ADR-0004 + ADR-0010)
-4. **Group 多型 + 平面 + settings.qa**(ADR-0004 + ADR-0011)
-5. **多租戶**:`rootOrgId`(同 v1.2;ADR-0005)
-6. **Template scope**:同 collection + scope 欄位(同 v1.2;ADR-0006)
-7. **HR 整合**:Mock REST(ADR-0007 v1.3 Amendment)
-8. **跨層派工:Single-hop Direct Dispatch**(ADR-0008 v1.3)
-9. **QA 雙簽 + Snapshot at Task Creation**(ADR-0011)
-10. **事件分發**:NATS + Webhook + outbox(同 v1.2;ADR-0009)
-11. Task 多型(ADR-0001)、指派模型(ADR-0002)、附件(ADR-0003)維持
-12. 稽核:每 aggregate embed `history[]`,軟刪除,7 年保留(3 年以上冷儲存)
-13. API:cursor pagination、欄位投影、ETag、JWT 帶 rootOrgId/orgPath/orgManagerScopes、RFC 7807 problem+json
-14. 時間:儲存 UTC `Instant`,wire ISO 8601 + offset
+啟動 M6 前參考 `docs/release/m5-plan.md` §M6+ 候選說明與 `CLAUDE.md` M6+ 區塊。
 
 ---
 
-## 給 mongodb-modeler 的銜接訊息
+## 下一里程碑啟動指令 placeholder
 
-詳見 `docs/spec/STATUS.md`(完整 collections + 索引建議)。**v1.3 重點**:
-
-### Schema 變更摘要(自 v1.2)
-
-#### `organizations`
-- **移除** `leaderId`(舊單值)
-- **加** `managerId: UserId?`(單值,nullable;對應 ORG_MANAGER 角色權威來源)
-- **加** `leaderIds: List<UserId>`(0..N;ActionRequest dispatch ownerId 候選來源)
-
-#### `groups`
-- **加** `settings.qa: { dualSignRequired: bool, requiredReviewerRoles: [Role] }`(必填,預設 false / `[]`)
-
-#### `tasks`
-- **加** `qaReviewPolicy: { dualSignRequired, requiredReviewerRoles[], snapshotAt, sourceGroupIds[] }`(必填,Task 建立時 snapshot)
-- **加** `qaReviews: [{ reviewerId, reviewerRole, decision, reason?, at }]`(append-only,預估 ≤ 5 / Task)
-
-#### `action_requests`
-- **改名** `assignedToOrgId` → `targetOrgId`(且 server 強制必為 leaf)
-- **移除** `relayChain: [RelayHop]`
-- **移除** `RelayHop` 內嵌 VO 整體
-
-#### `users`
-- `orgManagerScopes` 仍保留,但**改為 denormalized cache**;權威來源 `Organization.managerId` 反查;reactor 在 transfer-manager 後同步;不建索引(以 sparse multikey 提供 RBAC fallback)
-
-### 新 / 變更索引摘要
-
-| Collection | 索引 | 用途 |
-|---|---|---|
-| organizations | `{ rootOrgId: 1, managerId: 1 }` sparse | 反查「我是哪些節點 manager」(v1.3 新) |
-| organizations | `{ rootOrgId: 1, leaderIds: 1 }` sparse multikey | 反查「我是哪些節點 leader」(v1.3 新) |
-| groups | `{ rootOrgId: 1, "settings.qa.dualSignRequired": 1 }` sparse | 找出開雙簽的 Group(v1.3 新) |
-| tasks | `{ rootOrgId: 1, status: 1, "qaReviewPolicy.dualSignRequired": 1 }` sparse | Pending Review 看板查詢(v1.3 新) |
-| action_requests | `{ rootOrgId: 1, targetOrgId: 1, status: 1 }` | 承接 leaf 查目前手上(改名自 v1.2 assignedToOrgId) |
-
-### 關鍵設計問題請 mongodb-modeler 拍板
-1. **Org 樹**:純 adjacency list 還是 hybrid(adjacency + materialized path)?
-2. **Template scope 同集合**(spec 已推薦)
-3. **User accountName 唯一鍵**:`(rootOrgId, accountName)` partial?
-4. **outbox TTL 策略**:30 天 / 60 天 / 永久?
-5. **Org 節點 derived `isLeaf` / `path`**:寫入時計算並存(spec 推薦存)
-6. **`User.orgManagerScopes[]` cache**:reactor 維護 vs 即時計算? (spec 推薦 reactor + 即時計算 fallback)
-7. **`Task.qaReviewPolicy` 是否需 versioning**:目前不需(snapshot 不可變;Group settings 變更不影響已存在 Task,新建 Task 自動拿新 policy)
-
----
-
-## 待使用者確認的開放問題
-
-### 已全部拍板(Q-1 ~ Q-17)
-- 詳見 docs/spec/requirements.md §8.1
-- 不阻擋進入里程碑 2
-
-### 衍生待確認(Q-18 ~ Q-24)
-- 預設行為已寫入 spec,可平行進行 mongodb-modeler 建模;後續若答覆改變,微調對應章節
-
-| ID | 問題 | 預設行為 |
-|---|---|---|
-| Q-18 | 跨層 dispatch 發起範圍 | 任一上級皆可 |
-| Q-19 | Manager 休假代理 | 無 deputy 欄位 |
-| Q-20 | leaf reject 主動通知 originator? | 只 emit event |
-| Q-21 | Review reject 清空既往 reviews? | 清空 |
-| Q-22 | Group settings 專屬 versioning? | 不做 |
-| Q-23 | requiredReviewerRoles 語意 | AND |
-| Q-24 | 儲存層保留原始 offset? | 不保留 |
-
----
-
-## 驗收檢核清單(v1.3)
-
-- [ ] §1 系統概述沒有改動(本次以 §1 為唯一真實來源,§2 起重整)
-- [ ] Organization 加 managerId(單值)+ leaderIds[](0..N)是否符合 Q-15 預期
-- [ ] ActionRequest targetOrgId 必為 leaf、移除 relayChain 是否符合 Q-14 預期
-- [ ] §1.2 第 4 情境以 single-hop 模型化是否可接受
-- [ ] Group settings.qa + Task qaReviewPolicy snapshot 是否符合 Q-7 預期
-- [ ] 跨 leaf 協作禁止(INV-19 強化)是否符合 Q-13 預期
-- [ ] HR Mock REST 規格是否合理(ADR-0007 v1.3 Amendment)
-- [ ] 時間戳記策略(UTC 儲存 + ISO 8601+offset wire)是否符合 Q-17 預期
-- [ ] OpenAPI v1.3 新端點齊全(transfer-manager / leaders / Group settings PATCH / Task review)
-- [ ] 7 個衍生 Q(Q-18 ~ Q-24)是否需先回答
-
----
-
-## 啟動下一棒的指令(驗收通過後)
-
-```
-> Spec v1.3 已驗收(可附帶 Q-18 ~ Q-24 的回答),請用 mongodb-modeler 進行資料建模。
+```text
+> 啟動里程碑 M6(<主題名>)。
+> 負責 agent:<agent-name>。
+> 接手起點:<sub-STATUS.md path>。
+> 產出:<列出檔案 / 文件清單>。
+> 完成後依「Agent 協作協定」交付 handoff 四件套，並停下等驗收。
 ```

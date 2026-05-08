@@ -19,6 +19,13 @@ export const apiClient = axios.create({
   // Required for the browser to send httpOnly auth cookies cross-context
   // and to allow Set-Cookie headers to be applied by the browser.
   withCredentials: true,
+  // Disable axios's built-in XSRF auto-echo (it fires on every same-origin
+  // request including GET/HEAD when the XSRF-TOKEN cookie is present, which
+  // contradicts our ADR-0015 §FR-1.7 rule that GET/HEAD are exempt). Pointing
+  // it at a cookie name that will never be set keeps it inert and lets our
+  // custom interceptor below be the sole source of the header.
+  xsrfCookieName: '__axios_xsrf_disabled',
+  xsrfHeaderName: '__axios_xsrf_disabled',
 })
 
 let isRefreshing = false

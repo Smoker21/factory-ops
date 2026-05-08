@@ -1,0 +1,8 @@
+# Force LF for shell scripts so they stay executable on Linux / WSL
+# regardless of the host's `core.autocrlf` setting.
+*.sh        text eol=lf
+gradlew     text eol=lf
+
+# Init scripts mounted into containers must be LF too.
+docker/*.sh text eol=lf
+docker/*.js text eol=lf

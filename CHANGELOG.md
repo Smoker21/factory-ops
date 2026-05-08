@@ -6,6 +6,30 @@
 
 ## [Unreleased]
 
+### Added
+
+- 方法論基建：
+  - `docs/release/impact-matrix.md`：15 種變更類型(`CT-1` ~ `CT-15`)對應的必動清單
+  - `docs/release/checklist.md`：可重用的 Release Checklist 範本（複製到 PR description 逐條勾）
+  - `scripts/verify.sh`：一鍵本地驗證腳本（後端 test、前端 typecheck/lint/test；`--full` 加 integration test + build）
+- `CLAUDE.md` 新增五個方法論子節：
+  - § Spec / ADR 變更原則（混合制：ADR immutable + Amendment / supersede；Spec living + git tag；Schema living + migrations/）
+  - § STATUS.md Compact 原則（主 STATUS 為儀表板，歷史下沉 sub-STATUS / CHANGELOG）
+  - § Release Discipline（Impact Matrix + verify.sh + Checklist + Definition of Done）
+  - § Agent 協作協定（Handoff 四件套、讀寫邊界表、Stuck Protocol、主-sub 分工、並行 vs 序列）
+  - § ADR 門檻（5-Lens 判斷、白/黑名單、Decision Tree、Status Lifecycle、五要素檢核）
+
+### Changed
+
+- `STATUS.md` 依 Compact 原則精簡（230 行 → ~85 行）：刪除 v1.3 重整摘要、給 mongodb-modeler 的銜接訊息、Q-18 ~ Q-24、驗收檢核清單；歸檔內容已存於 `docs/spec/STATUS.md`
+- `CLAUDE.md` 反映 M1-M4 完成現況：M1-M4 詳述壓成完成歷史表（指向 sub-STATUS / CHANGELOG），新增 M5+ placeholder 與通用啟動範本
+- `CLAUDE.md` 目錄結構新增 `docs/release/`、`scripts/`、`e2e/`、`docker/` 條目
+- `CLAUDE.md` 「文件 / 自主程度」子節改為引用新的 § STATUS.md Compact、§ Agent 協作協定、§ ADR 門檻
+
+### Removed
+
+- `CLAUDE.md` 移除過時描述「Task 內容可使用貼圖」（與 spec Q-4 拍板結果不一致）
+
 ---
 
 ## [1.0.0-M4] - 2026-05-04
